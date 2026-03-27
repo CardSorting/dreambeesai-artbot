@@ -168,8 +168,7 @@ export async function execute(interaction) {
         });
 
         // --- Lightweight Attribution Sync (Push to Web App) ---
-        const discordTag = interaction.user.tag;
-        const targetUserId = `discord:${discordTag}`;
+        const targetUserId = `discord:${interaction.user.id}`;
 
         if (generationData.imageIds && generationData.imageIds[imageIndex]) {
             const imageId = generationData.imageIds[imageIndex];
@@ -184,6 +183,7 @@ export async function execute(interaction) {
                         imageId: imageId,
                         isBookmarked: false,
                         targetUserId: targetUserId,
+                        targetDisplayName: interaction.user.tag,
                         imgData: {
                             imageUrl: imageUrl,
                             thumbnailUrl: imageUrl,
@@ -206,6 +206,7 @@ export async function execute(interaction) {
                         prompt: generationData.prompt,
                         modelId: generationData.modelId,
                         targetUserId: targetUserId,
+                        targetDisplayName: interaction.user.tag,
                         requestId: `${originalInteractionId}_upscale`,
                         aspectRatio: generationData.aspectRatio || "1:1"
                     }

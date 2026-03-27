@@ -159,7 +159,7 @@ async function handleShowEnvironments(interaction, originalInteractionId, imageI
 async function handleGenerateMockup(interaction, originalInteractionId, imageIndex, itemId, envId) {
     await interaction.deferUpdate();
     const generationData = await getGeneration(originalInteractionId);
-    const dreambeesUid = generationData.dreambeesUid;
+    const dreambeesUid = generationData?.dreambeesUid || `discord:${interaction.user.id}`;
 
     const product = PRODUCTS.find(p => p.value === itemId);
     const env = ENVIRONMENTS.find(e => e.value === envId);
@@ -192,6 +192,7 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
                     itemId: itemId,
                     presetId: envId,
                     targetUserId: dreambeesUid,
+                    targetDisplayName: interaction.user.tag,
                     requestId: `mockup_${interaction.id}`
                 }
             }),
@@ -235,7 +236,7 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
 async function handleGenerateGrid(interaction, originalInteractionId, imageIndex, itemId) {
     await interaction.deferUpdate();
     const generationData = await getGeneration(originalInteractionId);
-    const dreambeesUid = generationData.dreambeesUid;
+    const dreambeesUid = generationData?.dreambeesUid || `discord:${interaction.user.id}`;
 
     const product = PRODUCTS.find(p => p.value === itemId);
     const chosenEnvs = ENVIRONMENTS.slice(0, 4).map(e => e.value);
@@ -268,6 +269,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                     itemId: itemId,
                     presetIds: chosenEnvs,
                     targetUserId: dreambeesUid,
+                    targetDisplayName: interaction.user.tag,
                     requestId: `grid_${interaction.id}`
                 }
             }),
@@ -334,7 +336,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
 async function handleGacha(interaction, originalInteractionId, imageIndex) {
     await interaction.deferUpdate();
     const generationData = await getGeneration(originalInteractionId);
-    const dreambeesUid = generationData.dreambeesUid;
+    const dreambeesUid = generationData?.dreambeesUid || `discord:${interaction.user.id}`;
 
     // REAL FINANCIAL DEBIT
     const requestId = `gacha_${interaction.id}`;
@@ -362,6 +364,7 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
                     action: "gachaSpin",
                     image: base64Image,
                     targetUserId: dreambeesUid,
+                    targetDisplayName: interaction.user.tag,
                     requestId: `gacha_${interaction.id}`
                 }
             }),

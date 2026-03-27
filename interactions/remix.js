@@ -600,6 +600,8 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
     const originalImageUrl = generationData.urls[imageIndex];
     const parentImageId = generationData.imageIds[imageIndex];
     const rootImageId = generationData.rootImageId || parentImageId;
+    // Standardize to Shadow ID if not already a UUID
+    const targetUserId = uid?.includes(':') ? uid : `discord:${uid}`;
 
     // Fetch original image buffer early for comparison
     const originalRes = await fetchWithTimeout(originalImageUrl, { agent: keepAliveAgent }, 15000);
@@ -647,7 +649,8 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
                 modelId: "flux-klein-4b",
                 image: originalImageUrl,
                 strength: strength,
-                targetUserId: uid,
+                targetUserId: targetUserId,
+                targetDisplayName: interaction.user.tag,
                 aspectRatio: generationData.aspectRatio || "1:1",
                 shouldBookmark: true,
                 metadata: {
@@ -690,7 +693,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
     // 5. Save locally with lineage
     await saveGeneration(requestId, {
         prompt: mergedPrompt, modelId: "flux-klein-4b", userId: interaction.user.id,
-        dreambeesUid: uid, guildId: interaction.guildId,
+        dreambeesUid: targetUserId, guildId: interaction.guildId,
         urls: [generationResult.imageUrl], imageIds: [generationResult.imageId],
         gridUrl: generationResult.imageUrl, cost: 0.5,
         parentImageId, rootImageId

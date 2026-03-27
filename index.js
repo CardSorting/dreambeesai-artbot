@@ -127,23 +127,52 @@ export async function handleInteraction(interaction, client, activeJobs) {
             
             // Enforce thread-only restriction for image generation with seamless transition
             if (command.category === 'image' && !interaction.channel.isThread()) {
-                try {
-                    const thread = await interaction.channel.threads.create({
-                        name: `🎨 ${interaction.user.username}'s ${command.data.name}`,
-                        autoArchiveDuration: 60,
-                        reason: 'Seamless image generation'
+                const permissions = interaction.appPermissions;
+                if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
+                    return await interaction.reply({ 
+                        content: '❌ **Permissions Error:** I need permission to create threads and send messages in them to work seamlessly in this channel. Please ask an admin to check my permissions!', 
+                        ephemeral: true 
                     });
+                }
 
+                try {
+                    // SEAMLESS ART STUDIO REUSE LOGIC
+                    // Find an existing thread (active or archived) owned by the bot for this user in this channel
+                    const threadResult = await interaction.channel.threads.fetch();
+                    let thread = threadResult.threads.find(t => 
+                        t.ownerId === interaction.client.user.id && 
+                        t.name.includes(`${interaction.user.username}'s Art Studio`)
+                    );
+
+                    let isNewThread = false;
+                    if (!thread) {
+                        const threadName = `🎨 ${interaction.user.username}'s Art Studio`;
+                        thread = await interaction.channel.threads.create({
+                            name: threadName,
+                            autoArchiveDuration: 60,
+                            reason: 'Seamless art studio creation'
+                        });
+                        isNewThread = true;
+                    } else if (thread.archived) {
+                        await thread.setArchived(false, 'Re-opening studio for new generation');
+                    }
+
+                    const threadedInteraction = new ThreadedInteraction(interaction, thread);
+                    
                     await interaction.reply({ 
-                        content: `✅ **Magic incoming!** I've created a dedicated thread for your creation: ${thread.toString()}. Let's move there!`, 
+                        content: `✅ **Drawing Room Ready!** I've ${isNewThread ? 'created' : 'opened'} your personal Art Studio: ${thread.toString()}`, 
                         ephemeral: true 
                     });
 
-                    const threadedInteraction = new ThreadedInteraction(interaction, thread);
+                    if (isNewThread) {
+                        await thread.send({
+                            content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨\nAll your generations in this channel will be tucked away here to keep things tidy.`
+                        });
+                    }
+
                     return await command.execute(threadedInteraction);
                 } catch (e) {
                     logger.error("Failed to create seamless thread", e);
-                    // Fallback to original behavior if thread creation fails
                     return await interaction.reply({ 
                         content: '❌ **Threads Only!** Please create a thread to start creating! (Automatic thread creation failed)', 
                         ephemeral: true 

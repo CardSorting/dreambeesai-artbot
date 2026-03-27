@@ -1,0 +1,195 @@
+import { Client, GatewayIntentBits, Collection } from 'discord.js';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { logger } from './lib/logger.js';
+import { cleanupStaleLocks, recoverZombieTransactions } from './lib/db.js';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function validateEnvironment() {
+    const required = [
+        'DISCORD_TOKEN', 
+        'DISCORD_CLIENT_ID', 
+        'DREAMBEES_API_URL', 
+        'DREAMBEES_API_KEY',
+        'B2_BUCKET',
+        'B2_ENDPOINT',
+        'B2_KEY_ID',
+        'B2_APP_KEY'
+    ];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length > 0) {
+        logger.error(`CRITICAL: Missing required environment variables: ${missing.join(', ')}`);
+        process.exit(1);
+    }
+
+    try {
+        new URL(process.env.DREAMBEES_API_URL);
+    } catch {
+        logger.error(`CRITICAL: Invalid DREAMBEES_API_URL format.`);
+        process.exit(1);
+    }
+}
+
+function startHeartbeat(activeJobs) {
+    setInterval(() => {
+        const memory = process.memoryUsage();
+        logger.info('Bot Heartbeat', {
+            activeJobs: activeJobs.size,
+            memory: {
+                rss: `${(memory.rss / 1024 / 1024).toFixed(2)} MB`,
+                heapUsed: `${(memory.heapUsed / 1024 / 1024).toFixed(2)} MB`
+            },
+            uptime: `${Math.floor(process.uptime() / 60)} minutes`
+        });
+    }, 15 * 60 * 1000); // Every 15 minutes
+}
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+    ]
+});
+
+const activeJobs = new Set();
+
+client.commands = new Collection();
+const commands = [];
+
+// Load Commands
+const commandsPath = path.join(__dirname, 'commands');
+if (fs.existsSync(commandsPath)) {
+    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+
+    for (const file of commandFiles) {
+        const filePath = path.join(commandsPath, file);
+        const command = await import(`file://${filePath}`);
+        if ('data' in command && 'execute' in command) {
+            client.commands.set(command.data.name, command);
+            commands.push(command.data.toJSON());
+            logger.info(`Loaded command: ${command.data.name}`);
+        } else {
+            logger.warn(`The command at ${filePath} is missing a required "data" or "execute" property.`);
+        }
+    }
+}
+
+// Load Interactions
+client.buttonInteractions = new Collection();
+const interactionsPath = path.join(__dirname, 'interactions');
+if (fs.existsSync(interactionsPath)) {
+    const interactionFiles = fs.readdirSync(interactionsPath).filter(file => file.endsWith('.js'));
+    for (const file of interactionFiles) {
+        const filePath = path.join(interactionsPath, file);
+        const interaction = await import(`file://${filePath}`);
+        if ('customIdPrefix' in interaction && 'execute' in interaction) {
+            client.buttonInteractions.set(interaction.customIdPrefix, interaction);
+        }
+    }
+}
+
+client.once('ready', async () => {
+    logger.info(`Logged in as ${client.user.tag}! Slash commands should be registered via scripts/register-commands.js`);
+    
+    // Cleanup any hung locks and recover zombie transactions from previous sessions
+    try {
+        const cleaned = await cleanupStaleLocks();
+        if (cleaned > 0) logger.info(`Cleaned up ${cleaned} stale locks on startup.`);
+        
+        const recovered = await recoverZombieTransactions();
+        if (recovered > 0) logger.info(`Successfully recovered ${recovered} zombie wallet transactions.`);
+    } catch (e) {
+        logger.error("Startup maintenance failed", e);
+    }
+});
+
+export async function handleInteraction(interaction, client, activeJobs) {
+    const interactionLogger = logger.child({
+        interactionId: interaction.id,
+        userId: interaction.user.id,
+        userTag: interaction.user.tag,
+        guildId: interaction.guildId
+    });
+
+    try {
+        if (interaction.isChatInputCommand()) {
+            const command = client.commands.get(interaction.commandName);
+            if (!command) return;
+
+            activeJobs.add(interaction.id);
+            
+            // Enforce thread-only restriction for image generation
+            if (command.category === 'image' && !interaction.channel.isThread()) {
+                await interaction.reply({ 
+                    content: '❌ **Threads Only!** To prevent spam in general channels, images can only be generated within a thread. Please create a thread to start creating!', 
+                    ephemeral: true 
+                });
+                return;
+            }
+
+            await command.execute(interaction);
+        } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
+            const matchedPrefix = Array.from(client.buttonInteractions.keys()).find(prefix => interaction.customId.startsWith(prefix));
+            
+            if (matchedPrefix) {
+                const handler = client.buttonInteractions.get(matchedPrefix);
+                activeJobs.add(interaction.id);
+                await handler.execute(interaction);
+            }
+        }
+    } catch (error) {
+        interactionLogger.error(`Unhandled interaction error`, error);
+        
+        const errorMessage = { content: '❌ **Bot Error:** Something went wrong while processing your request. Please try again later.', ephemeral: true };
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply(errorMessage).catch(() => {});
+        } else {
+            await interaction.reply(errorMessage).catch(() => {});
+        }
+    } finally {
+        activeJobs.delete(interaction.id);
+    }
+}
+
+client.on('interactionCreate', async interaction => {
+    await handleInteraction(interaction, client, activeJobs);
+});
+
+if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.meta.url === `file://${process.argv[1]}`) {
+    logger.warn("Missing DISCORD_TOKEN or DISCORD_CLIENT_ID in .env file. Bot cannot start.");
+} else if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV === 'production') {
+    validateEnvironment();
+    startHeartbeat(activeJobs);
+    client.login(process.env.DISCORD_TOKEN);
+
+    // Graceful Shutdown
+    const shutdown = async (signal) => {
+        logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 30s)...`);
+        
+        let waitAttempts = 0;
+        while (activeJobs.size > 0 && waitAttempts < 30) {
+            await new Promise(r => setTimeout(r, 1000));
+            waitAttempts++;
+            if (waitAttempts % 5 === 0) logger.info(`Still waiting for ${activeJobs.size} jobs...`);
+        }
+
+        if (activeJobs.size > 0) {
+            logger.warn(`Shutdown forced while ${activeJobs.size} jobs were still active.`);
+        } else {
+            logger.info(`All jobs drained. Goodbye!`);
+        }
+
+        client.destroy();
+        process.exit(0);
+    };
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+

@@ -1,0 +1,121 @@
+import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { db, getUserByDiscordId } from '../lib/db.js';
+import { performGeneration } from '../lib/generator.js';
+import { MODELS, calculateBatchCost } from '../lib/models.js';
+import { logger } from '../lib/logger.js';
+import crypto from 'crypto';
+
+export const category = 'image';
+
+const MODEL_ID = 'wai-illustrious';
+const MODEL_CONFIG = MODELS[MODEL_ID];
+const BATCH_SIZE = 4;
+const TOTAL_COST = calculateBatchCost(MODEL_ID, BATCH_SIZE);
+const WEBAPP_URL = process.env.WEBAPP_URL || 'https://dreambeesai.com';
+
+const SAFETY_BLOCKLIST = [
+    'nsfw', 'porn', 'gore', 'violence', 'blood', 'sex', 'nude', 'naked'
+];
+
+function sanitizePrompt(text) {
+    if (!text) return '';
+    return text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F093}\u{1F191}-\u{1F251}\u{2B50}]/gu, '')
+               .replace(/\s+/g, ' ')
+               .trim();
+}
+
+export const data = new SlashCommandBuilder()
+    .setName('sdxl_h100')
+    .setDescription(`${MODEL_CONFIG.commandDescription} (Costs ${TOTAL_COST} Zaps)`)
+    .addStringOption(option =>
+        option.setName('prompt')
+            .setDescription('Describe the image you want to generate')
+            .setRequired(true)
+            .setMaxLength(1000));
+
+export async function execute(interaction) {
+    const discordId = interaction.user.id;
+    const discordTag = interaction.user.tag;
+    let originalPrompt = interaction.options.getString('prompt');
+    const prompt = sanitizePrompt(originalPrompt);
+
+    // 1. Safety Checks
+    const lowerPrompt = prompt.toLowerCase();
+    const isUnsafe = SAFETY_BLOCKLIST.some(word => lowerPrompt.includes(word));
+    
+    if (isUnsafe) {
+        logger.warn(`Unsafe prompt rejected`, { discordId, discordTag, originalPrompt });
+        return interaction.reply({ 
+            content: `🛑 **Safety Alert!** Your prompt contains prohibited terms. Please keep it clean and creative!`, 
+            ephemeral: true 
+        });
+    }
+
+    if (prompt.length < 3) {
+        return interaction.reply({ content: '❌ **Error!** Please provide a valid prompt (at least 3 characters).', ephemeral: true });
+    }
+
+    // 2. Fetch User Profile
+    const userData = await getUserByDiscordId(discordId);
+
+    // 3. Handle Unlinked Accounts (Onboarding)
+    if (!userData) {
+        await interaction.deferReply({ ephemeral: true });
+        const pairingToken = crypto.randomBytes(16).toString('hex');
+        const expiresAt = new Date(); 
+        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+
+        await db.collection('discord_pairing_tokens').doc(pairingToken).set({
+            discordId, discordTag, expiresAt, createdAt: new Date()
+        });
+
+        const pairingUrl = `${WEBAPP_URL}/verify?token=${pairingToken}`;
+        
+        const onboardEmbed = new EmbedBuilder()
+            .setTitle('Welcome to DreamBees Artist! ✨')
+            .setDescription(`Hello **@${discordTag}**! Pair your account to start generating AI masterpieces.\n\n[Visit DreamBeesAI.com](${WEBAPP_URL})`)
+            .setColor('#facc15') // Bumblebee Yellow
+            .addFields(
+                { name: '🚀 Automatic Sync', value: 'Generations are saved to your collection.', inline: true },
+                { name: '📂 Web History', value: 'Access history anytime on the webapp.', inline: true },
+                { name: '🎨 Premium Models', value: 'Unlock ${MODEL_CONFIG.name} and more.', inline: true }
+            )
+            .setThumbnail('https://dreambeesai.com/logo.png');
+
+        const linkRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setLabel('🚀 One-Click Pair Account').setStyle(ButtonStyle.Link).setURL(pairingUrl)
+        );
+
+        await interaction.editReply({ embeds: [onboardEmbed], components: [linkRow] });
+
+        // Listen for verification
+        const unsubscribe = db.collection('users').where('discordId', '==', discordId).limit(1).onSnapshot(async (snap) => {
+            if (!snap.empty) {
+                unsubscribe();
+                clearTimeout(timeoutId);
+                const linkedUid = snap.docs[0].id;
+                await interaction.editReply({ content: `✅ **Link Verified!** Starting your generation...`, components: [] });
+                return performGeneration(interaction, linkedUid, prompt, MODEL_ID);
+            }
+        });
+
+        const timeoutId = setTimeout(() => {
+            unsubscribe();
+            interaction.editReply({ content: '❌ Pairing timed out. Please try the command again.', components: [] }).catch(() => {});
+        }, 15 * 60 * 1000);
+
+        return;
+    }
+
+    // 4. Pre-flight Balance Check
+    if ((userData.zaps || 0) < TOTAL_COST) {
+        return interaction.reply({ 
+            content: `❌ **Insufficient Zaps!** This generation costs **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nTop up at ${WEBAPP_URL}/pricing`, 
+            ephemeral: true 
+        });
+    }
+
+    // 5. Start Generation
+    await interaction.deferReply();
+    return performGeneration(interaction, userData.uid, prompt, MODEL_ID);
+}

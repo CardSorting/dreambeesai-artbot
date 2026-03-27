@@ -25,7 +25,7 @@ function sanitizePrompt(text) {
 }
 
 export const data = new SlashCommandBuilder()
-    .setName('zit_h100')
+    .setName('flash')
     .setDescription(`${MODEL_CONFIG.commandDescription} (Costs ${TOTAL_COST} Zaps)`)
     .addStringOption(option =>
         option.setName('prompt')

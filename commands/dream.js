@@ -25,7 +25,7 @@ function sanitizePrompt(text) {
 }
 
 export const data = new SlashCommandBuilder()
-    .setName('sdxl_h100')
+    .setName('dream')
     .setDescription(`${MODEL_CONFIG.commandDescription} (Costs ${TOTAL_COST} Zaps)`)
     .addStringOption(option =>
         option.setName('prompt')

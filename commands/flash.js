@@ -1,9 +1,8 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
-import { db, getUserByDiscordId } from '../lib/db.js';
+import { SlashCommandBuilder } from 'discord.js';
+import { getOrCreateDiscordUser } from '../lib/db.js';
 import { performGeneration } from '../lib/generator.js';
 import { MODELS, calculateBatchCost } from '../lib/models.js';
 import { logger } from '../lib/logger.js';
-import crypto from 'crypto';
 
 export const category = 'image';
 
@@ -11,7 +10,6 @@ const MODEL_ID = 'zit-h100-v1';
 const MODEL_CONFIG = MODELS[MODEL_ID];
 const BATCH_SIZE = 4;
 const TOTAL_COST = calculateBatchCost(MODEL_ID, BATCH_SIZE);
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://dreambeesai.com';
 
 const SAFETY_BLOCKLIST = [
     'nsfw', 'porn', 'gore', 'violence', 'blood', 'sex', 'nude', 'naked'
@@ -55,66 +53,18 @@ export async function execute(interaction) {
         return interaction.reply({ content: '❌ **Error!** Please provide a valid prompt (at least 3 characters).', ephemeral: true });
     }
 
-    // 2. Fetch User Profile
-    const userData = await getUserByDiscordId(discordId);
+    // 2. Fetch or Create Discord User Profile
+    const userData = await getOrCreateDiscordUser(discordId, discordTag);
 
-    // 3. Handle Unlinked Accounts
-    if (!userData) {
-        await interaction.deferReply({ ephemeral: true });
-        const pairingToken = crypto.randomBytes(16).toString('hex');
-        const expiresAt = new Date(); 
-        expiresAt.setMinutes(expiresAt.getMinutes() + 15);
-
-        await db.collection('discord_pairing_tokens').doc(pairingToken).set({
-            discordId, discordTag, expiresAt, createdAt: new Date()
-        });
-
-        const pairingUrl = `${WEBAPP_URL}/verify?token=${pairingToken}`;
-        
-        const onboardEmbed = new EmbedBuilder()
-            .setTitle('Welcome to DreamBees Artist! ✨')
-            .setDescription(`Hello **@${discordTag}**! Pair your account to start generating AI masterpieces.\n\n[Visit DreamBeesAI.com](${WEBAPP_URL})`)
-            .setColor('#facc15')
-            .addFields(
-                { name: '🚀 Automatic Sync', value: 'Generations are saved to your collection.', inline: true },
-                { name: '📂 Web History', value: 'Access history anytime on the webapp.', inline: true },
-                { name: '🎨 Premium Models', value: `Unlock ${MODEL_CONFIG.name} and more.`, inline: true }
-            )
-            .setThumbnail('https://dreambeesai.com/logo.png');
-
-        const linkRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setLabel('🚀 One-Click Pair Account').setStyle(ButtonStyle.Link).setURL(pairingUrl)
-        );
-
-        await interaction.editReply({ embeds: [onboardEmbed], components: [linkRow] });
-
-        const unsubscribe = db.collection('users').where('discordId', '==', discordId).limit(1).onSnapshot(async (snap) => {
-            if (!snap.empty) {
-                unsubscribe();
-                clearTimeout(timeoutId);
-                const linkedUid = snap.docs[0].id;
-                await interaction.editReply({ content: `✅ **Link Verified!** Starting your generation...`, components: [] });
-                return performGeneration(interaction, linkedUid, prompt, MODEL_ID);
-            }
-        });
-
-        const timeoutId = setTimeout(() => {
-            unsubscribe();
-             interaction.editReply({ content: '❌ Pairing timed out. Please try the command again.', components: [] }).catch(() => {});
-        }, 15 * 60 * 1000);
-
-        return;
-    }
-
-    // 4. Pre-flight Balance Check
+    // 3. Pre-flight Balance Check
     if ((userData.zaps || 0) < TOTAL_COST) {
         return interaction.reply({ 
-            content: `❌ **Insufficient Zaps!** This generation costs **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nTop up at ${WEBAPP_URL}/pricing`, 
+            content: `❌ **Insufficient Zaps!** This generation costs **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nYou can earn more Zaps by participating in community events!`, 
             ephemeral: true 
         });
     }
 
-    // 5. Start Generation
+    // 4. Start Generation
     await interaction.deferReply();
     return performGeneration(interaction, userData.uid, prompt, MODEL_ID);
 }

@@ -20,10 +20,29 @@ function validateEnvironment() {
         'DREAMBEES_API_KEY',
         'B2_BUCKET',
         'B2_ENDPOINT',
+        'B2_REGION',
         'B2_KEY_ID',
-        'B2_APP_KEY'
+        'B2_APP_KEY',
+        'B2_PUBLIC_URL'
     ];
+
     const missing = required.filter(k => !process.env[k]);
+
+    const projectVars = ['GCLOUD_PROJECT', 'FIREBASE_PROJECT_ID'];
+    const hasProject = projectVars.some(k => !!process.env[k]);
+    if (!hasProject) {
+        missing.push('GCLOUD_PROJECT or FIREBASE_PROJECT_ID');
+    }
+    
+    // Conditional Firebase check
+    const hasServiceAccountFile = fs.existsSync(path.resolve(process.cwd(), './serviceAccountKey.json'));
+    const hasServiceAccountJson = !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    const hasIndividualVars = process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!hasServiceAccountFile && !hasServiceAccountJson && !hasIndividualVars && !process.env.FIREBASE_API_KEY) {
+        missing.push('FIREBASE_CREDENTIALS (JSON, File, or API Key)');
+    }
+
     if (missing.length > 0) {
         logger.error(`CRITICAL: Missing required environment variables: ${missing.join(', ')}`);
         process.exit(1);

@@ -6,6 +6,11 @@ import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 export const customIdPrefix = 'upscale_';
 
 export async function execute(interaction) {
+    // Legacy link handler removed as accounts are now separate.
+    if (interaction.customId.startsWith('upscale_link_account')) {
+        return interaction.reply({ content: '🔗 **Syncing is no longer required.** Discord accounts are now standalone! Enjoy.', ephemeral: true });
+    }
+
     const parts = interaction.customId.split('_');
     if (parts.length !== 3) {
         return interaction.reply({ content: 'Invalid button ID format.', ephemeral: true });
@@ -47,39 +52,22 @@ export async function execute(interaction) {
 
         const singleImageBuffer = Buffer.from(await imageRes.arrayBuffer());
         const attachment = new AttachmentBuilder(singleImageBuffer, { name: `upscaled_${originalInteractionId.slice(-6)}_${imageIndex + 1}.webp` });
-
-        const dreambeesUid = generationData.dreambeesUid;
         
         const upscaleEmbed = new EmbedBuilder()
             .setTitle(`Upscale Complete (U${imageIndex + 1}) ✨`)
-            .setColor('#7289da')
-            .setDescription(dreambeesUid ? '✨ **Automatically saved to your collection!**' : '⚠️ **Not linked to DreamBees.** Syncing is disabled.')
+            .setColor('#fbbf24')
+            .setDescription('✨ **Image retrieved successfully!** This generation is saved to your independent Discord history.')
             .setImage(`attachment://upscaled_${originalInteractionId.slice(-6)}_${imageIndex + 1}.webp`);
 
         const syncRow = new ActionRowBuilder();
-        if (dreambeesUid) {
-            syncRow.addComponents(
-                new ButtonBuilder()
-                    .setLabel('View My Collection')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(`https://dreambeesai.com/profile`)
-            );
-        } else {
-            syncRow.addComponents(
-                new ButtonBuilder()
-                    .setLabel('Link Account')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(`https://dreambeesai.com`)
-            );
-        }
-
-        // --- MOCKUP STUDIO (Expansion) ---
+        
+        // --- MOCKUP STUDIO ---
         const mockupButton = new ButtonBuilder()
             .setCustomId(`mockup_studio_${originalInteractionId}_${imageIndex}`)
             .setLabel('Mockup Studio ✨')
             .setStyle(ButtonStyle.Success);
 
-        // --- REMIX 💡 (New Feature) ---
+        // --- REMIX 💡 ---
         const remixButton = new ButtonBuilder()
             .setCustomId(`remix_upscale_${originalInteractionId}_${imageIndex}`)
             .setLabel('Remix 💡')
@@ -179,21 +167,23 @@ export async function execute(interaction) {
             components: [syncRow, vibeRow, toolsRow]
         });
 
-        // --- Sync Bookmark to Webapp (Asynchronous/Fire-and-forget) ---
-        if (dreambeesUid && generationData.imageIds && generationData.imageIds[imageIndex]) {
+        // --- Lightweight Attribution Sync (Push to Web App) ---
+        const discordTag = interaction.user.tag;
+        const targetUserId = `discord:${discordTag}`;
+
+        if (generationData.imageIds && generationData.imageIds[imageIndex]) {
             const imageId = generationData.imageIds[imageIndex];
+            
+            // 1. Auto-Bookmark for the Discord Identity
             fetchWithTimeout(process.env.DREAMBEES_API_URL, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-API-KEY": process.env.DREAMBEES_API_KEY
-                },
+                headers: { "Content-Type": "application/json", "X-API-KEY": process.env.DREAMBEES_API_KEY },
                 body: JSON.stringify({
                     data: {
                         action: "toggleBookmark",
                         imageId: imageId,
                         isBookmarked: false,
-                        targetUserId: dreambeesUid,
+                        targetUserId: targetUserId,
                         imgData: {
                             imageUrl: imageUrl,
                             thumbnailUrl: imageUrl,
@@ -203,18 +193,9 @@ export async function execute(interaction) {
                     }
                 }),
                 agent: keepAliveAgent
-            }, 15000).then(async (res) => {
-                 if (res.ok) {
-                    logger.info(`Auto-bookmarked upscaled image ${imageId} for user ${dreambeesUid}`);
-                } else {
-                    const errText = await res.text();
-                    logger.error(`Failed to bookmark upscaled image ${imageId}`, { status: res.status, error: errText });
-                }
-            }).catch(err => {
-                logger.error(`Exception during upscale bookmarking for ${imageId}`, err);
-            });
+            }, 15000).catch(err => logger.error(`Upscale Bookmark Sync Failed`, err));
 
-            // --- Register to Global Feed ---
+            // 2. Register to Global Feed
             fetchWithTimeout(process.env.DREAMBEES_API_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-API-KEY": process.env.DREAMBEES_API_KEY },
@@ -224,16 +205,14 @@ export async function execute(interaction) {
                         imageUrl: imageUrl,
                         prompt: generationData.prompt,
                         modelId: generationData.modelId,
-                        targetUserId: dreambeesUid,
-                        requestId: `${interactionId}_upscale`,
+                        targetUserId: targetUserId,
+                        requestId: `${originalInteractionId}_upscale`,
                         aspectRatio: generationData.aspectRatio || "1:1"
                     }
                 }),
                 agent: keepAliveAgent
             }, 15000).catch(err => logger.error(`Feed Sync Failed for ${imageId}`, err));
-            // -----------------------------
         }
-        // ------------------------------
     } catch (e) {
         logger.error(`Error in button interaction ${interaction.customId}`, e);
         const errorContent = `❌ An error occurred while retrieving the image. Error: ${e.message}`;

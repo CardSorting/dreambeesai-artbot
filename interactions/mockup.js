@@ -1,5 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, AttachmentBuilder } from 'discord.js';
 import { getGeneration, getUserByDiscordId } from '../lib/db.js';
+import sharp from 'sharp';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 
@@ -234,9 +235,9 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
     });
 
     try {
-        const imageRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent }, 15000);
-        const buffer = Buffer.from(await imageRes.arrayBuffer());
-        const base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+        const sourceRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent }, 15000);
+        const sourceBuffer = Buffer.from(await sourceRes.arrayBuffer());
+        const base64Image = `data:image/png;base64,${sourceBuffer.toString('base64')}`;
 
         const apiResponse = await fetchWithTimeout(process.env.DREAMBEES_API_URL, {
             method: "POST",
@@ -252,18 +253,41 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                 }
             }),
             agent: keepAliveAgent
-        }, 80000); // Longer timeout for grid
+        }, 80000);
 
         const { result } = await apiResponse.json();
         
-        // Construct the grid response (Multiple images)
+        // CREATE PROFESSIONAL 2X2 COMPOSITE GRID
+        const gridBuffers = await Promise.all(result.urls.map(async url => {
+            const res = await fetchWithTimeout(url, { agent: keepAliveAgent }, 15000);
+            return Buffer.from(await res.arrayBuffer());
+        }));
+
+        const compositeBuffer = await sharp({
+            create: {
+                width: 2048,
+                height: 2048,
+                channels: 3,
+                background: { r: 18, g: 18, b: 18 }
+            }
+        })
+        .composite([
+            { input: await sharp(gridBuffers[0]).resize(1024, 1024).toBuffer(), left: 0, top: 0 },
+            { input: await sharp(gridBuffers[1]).resize(1024, 1024).toBuffer(), left: 1024, top: 0 },
+            { input: await sharp(gridBuffers[2]).resize(1024, 1024).toBuffer(), left: 0, top: 1024 },
+            { input: await sharp(gridBuffers[3]).resize(1024, 1024).toBuffer(), left: 1024, top: 1024 }
+        ])
+        .jpeg({ quality: 90 })
+        .toBuffer();
+
+        const attachment = new AttachmentBuilder(compositeBuffer, { name: 'mockup-grid.jpg' });
+
         const embed = new EmbedBuilder()
             .setTitle(`🪄 Elite 4-Grid: ${product.label}`)
-            .setDescription(`Generated with **Studio**, **Marble**, **Shadow Play**, and **Otaku Room** environments.`)
-            .setColor('#facc15');
-
-        // Note: For now, I'll just show the first one and provide links for all 4
-        embed.setImage(result.urls[0]);
+            .setDescription(`High-fidelity visualization across Studio, Marble, Shadow Play, and Otaku Room. Credits deducted.`)
+            .setColor('#facc15')
+            .setImage('attachment://mockup-grid.jpg')
+            .setFooter({ text: 'DreamBees Alchemist • Universal Mockup Studio' });
 
         const row = new ActionRowBuilder().addComponents(
              new ButtonBuilder()
@@ -276,13 +300,14 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                 .setStyle(ButtonStyle.Secondary)
         );
 
-        const linksRow = new ActionRowBuilder();
-        result.urls.forEach((url, i) => {
-             linksRow.addComponents(new ButtonBuilder().setLabel(`Env ${i+1}`).setStyle(ButtonStyle.Link).setURL(url));
+        await interaction.editReply({ 
+            content: dreambeesUid ? '✅ **Saved to your collection!**' : '', 
+            embeds: [embed], 
+            files: [attachment],
+            components: [row] 
         });
-
-        await interaction.editReply({ content: '', embeds: [embed], components: [linksRow, row] });
     } catch (e) {
+        logger.error("Grid Rendering Failed", e);
         await interaction.editReply({ content: `❌ **Grid Failed:** ${e.message}`, components: [] });
     }
 }

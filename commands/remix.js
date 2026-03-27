@@ -30,7 +30,13 @@ export async function execute(interaction) {
 
         // 1. Resolve Input (URL or ID)
         if (input.startsWith('http')) {
-            imageUrl = input;
+            try {
+                const url = new URL(input);
+                if (!['http:', 'https:'].includes(url.protocol)) throw new Error("Invalid protocol");
+                imageUrl = input;
+            } catch (err) {
+                return interaction.editReply({ content: '❌ Please provide a valid HTTP/HTTPS image URL.' });
+            }
         } else {
             // Assume Image ID and fetch from backend
             const API_URL = process.env.DREAMBEES_API_URL;
@@ -114,6 +120,6 @@ export async function execute(interaction) {
 
     } catch (e) {
         logger.error(`Remix command failed for ${input}`, e);
-        await interaction.editReply({ content: `❌ **Remix Command Failed:** ${e.message}` });
+        await interaction.editReply({ content: `❌ **Remix Command Failed:** ${e.message || 'Unknown Error'}` });
     }
 }

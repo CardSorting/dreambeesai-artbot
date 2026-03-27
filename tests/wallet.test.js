@@ -1,15 +1,44 @@
-import { Wallet } from '../lib/wallet.js';
-import { db } from '../lib/db.js';
+import { jest } from '@jest/globals';
 
-// Mock Firestore
-jest.mock('../lib/db.js', () => ({
+// 1. Declare Mocks using unstable_mockModule (MUST come before we import the SUT in ESM)
+jest.unstable_mockModule('../lib/firebase.js', () => ({
     db: {
         collection: jest.fn().mockReturnThis(),
         doc: jest.fn().mockReturnThis(),
         get: jest.fn(),
-        runTransaction: jest.fn()
+        runTransaction: jest.fn(),
+        batch: jest.fn().mockReturnValue({
+            set: jest.fn().mockReturnThis(),
+            update: jest.fn().mockReturnThis(),
+            delete: jest.fn().mockReturnThis(),
+            commit: jest.fn().mockResolvedValue({})
+        })
+    },
+    admin: {
+        firestore: {
+            FieldValue: {
+                serverTimestamp: jest.fn(() => 'mock-timestamp')
+            }
+        }
+    },
+    logger: {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn()
     }
 }));
+
+jest.unstable_mockModule('../lib/db/config.js', () => ({
+    getRemoteConfig: jest.fn().mockResolvedValue({ 
+        dailyRewardAmount: 100, 
+        streakBonusAmount: 10, 
+        maxStreakBonus: 100 
+    })
+}));
+
+// 2. Import SUT and Mocked Modules via dynamic import
+const { Wallet } = await import('../lib/wallet.js');
+const { db } = await import('../lib/firebase.js');
 
 describe('Wallet Class', () => {
     const uid = 'test-user';
@@ -28,7 +57,7 @@ describe('Wallet Class', () => {
         });
 
         await expect(Wallet.debit(uid, 10, requestId))
-            .rejects.toThrow('DreamBees User not found.');
+            .rejects.toThrow('Discord User not found.');
     });
 
     test('debit should succeed if balance is sufficient', async () => {

@@ -193,6 +193,7 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
                     presetId: envId,
                     targetUserId: dreambeesUid,
                     targetDisplayName: interaction.user.tag,
+                    targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                     requestId: `mockup_${interaction.id}`
                 }
             }),
@@ -270,6 +271,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                     presetIds: chosenEnvs,
                     targetUserId: dreambeesUid,
                     targetDisplayName: interaction.user.tag,
+                    targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                     requestId: `grid_${interaction.id}`
                 }
             }),
@@ -365,6 +367,7 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
                     image: base64Image,
                     targetUserId: dreambeesUid,
                     targetDisplayName: interaction.user.tag,
+                    targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                     requestId: `gacha_${interaction.id}`
                 }
             }),

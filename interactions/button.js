@@ -184,6 +184,7 @@ export async function execute(interaction) {
                         isBookmarked: false,
                         targetUserId: targetUserId,
                         targetDisplayName: interaction.user.tag,
+                        targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                         imgData: {
                             imageUrl: imageUrl,
                             thumbnailUrl: imageUrl,
@@ -207,6 +208,7 @@ export async function execute(interaction) {
                         modelId: generationData.modelId,
                         targetUserId: targetUserId,
                         targetDisplayName: interaction.user.tag,
+                        targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                         requestId: `${originalInteractionId}_upscale`,
                         aspectRatio: generationData.aspectRatio || "1:1"
                     }

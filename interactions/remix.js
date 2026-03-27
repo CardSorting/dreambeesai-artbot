@@ -651,6 +651,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
                 strength: strength,
                 targetUserId: targetUserId,
                 targetDisplayName: interaction.user.tag,
+                targetPhotoURL: interaction.user.displayAvatarURL({ extension: 'png', size: 256 }),
                 aspectRatio: generationData.aspectRatio || "1:1",
                 shouldBookmark: true,
                 metadata: {

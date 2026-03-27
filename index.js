@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
-import { cleanupStaleLocks, recoverZombieTransactions } from './lib/db.js';
+import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId } from './lib/db.js';
 import { ThreadedInteraction } from './lib/discord-ux.js';
 
 dotenv.config();
@@ -137,12 +137,22 @@ export async function handleInteraction(interaction, client, activeJobs) {
 
                 try {
                     // SEAMLESS ART STUDIO REUSE LOGIC
-                    // Find an existing thread (active or archived) owned by the bot for this user in this channel
-                    const threadResult = await interaction.channel.threads.fetch();
-                    let thread = threadResult.threads.find(t => 
-                        t.ownerId === interaction.client.user.id && 
-                        t.name.includes(`${interaction.user.username}'s Art Studio`)
-                    );
+                    // Use database-backed lookup for maximum reliability
+                    const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
+                    let thread = null;
+                    
+                    if (storedThreadId) {
+                        thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
+                    }
+
+                    // Fallback to name-based lookup if DB lookup failed (e.g. initial migration or DB issue)
+                    if (!thread) {
+                        const allThreads = await interaction.channel.threads.fetch();
+                        thread = allThreads.threads.find(t => 
+                            t.ownerId === interaction.client.user.id && 
+                            t.name.includes(`${interaction.user.username}'s Art Studio`)
+                        );
+                    }
 
                     let isNewThread = false;
                     if (!thread) {
@@ -153,6 +163,8 @@ export async function handleInteraction(interaction, client, activeJobs) {
                             reason: 'Seamless art studio creation'
                         });
                         isNewThread = true;
+                        // Save the new thread ID to the database
+                        await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
                     } else if (thread.archived) {
                         await thread.setArchived(false, 'Re-opening studio for new generation');
                     }

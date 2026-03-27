@@ -77,11 +77,11 @@ export async function execute(interaction) {
 
         // 3. Show the Remix Studio UI
         const embed = new EmbedBuilder()
-            .setTitle('💡 Universal Remix Studio')
-            .setDescription(`**Target Image:** [Direct Link](${imageUrl})\n**Original Prompt:** ${prompt.substring(0, 200)}...\n\nSelect a vibe below or click "Manual Remix" to provide custom instructions.`)
+            .setTitle('🍯 Universal Remix Hive')
+            .setDescription(`**Target Honey:** [Direct Link](${imageUrl})\n**Original Nectar:** ${prompt.substring(0, 200)}...\n\nSelect a floral vibe below or click "Manual Remix" to provide custom pollination instructions.`)
             .setImage(imageUrl)
-            .setColor('#7289da')
-            .setFooter({ text: 'DreamBees Alchemist • Universal Image Evolution' });
+            .setColor('#fbbf24') // Golden Bee
+            .setFooter({ text: 'DreamBees Hive • Universal Image Evolution' });
 
         const syncRow = new ActionRowBuilder().addComponents(
              new ButtonBuilder()

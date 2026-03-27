@@ -14,8 +14,30 @@ export async function execute(interaction) {
     const discordId = interaction.user.id;
     const guildId = interaction.guildId;
     const startTime = Date.now();
+    const targetGuildId = process.env.DREAMBEES_GUILD_ID || '1275879277895745536';
 
-    // 1. Rate Limiting (Spam Prevention)
+    // 1. Server Membership Check (Exclusive to DreamBees)
+    let isServerMember = guildId === targetGuildId;
+    if (!isServerMember) {
+        try {
+            const guild = await interaction.client.guilds.fetch(targetGuildId).catch(() => null);
+            if (guild) {
+                const member = await guild.members.fetch(discordId).catch(() => null);
+                if (member) isServerMember = true;
+            }
+        } catch (e) {
+            logger.error(`Membership check failed for ${discordId}`, e);
+        }
+    }
+
+    if (!isServerMember) {
+        return interaction.reply({ 
+            content: `🚫 **Harvest Restricted!** 🐝\n\nYour daily Zaps are kept safe inside the **DreamBees Hive**. To unlock your daily rewards and join the community of creators, please join our official server!\n\n✨ **Unlock your rewards here:** https://discord.com/invite/curMHRAN8y`, 
+            ephemeral: true 
+        });
+    }
+
+    // 2. Rate Limiting (Spam Prevention)
     const cooldownMs = await getRemainingCooldown(discordId);
     if (cooldownMs > 0) {
         return interaction.reply({ 
@@ -35,26 +57,20 @@ export async function execute(interaction) {
 
     try {
         const result = await Wallet.claimDaily(discordId, { guildId });
-
-        // Calculate next reset (Midnight UTC)
-        const nextReset = new Date();
-        nextReset.setUTCHours(24, 0, 0, 0);
-        const nextResetTs = Math.floor(nextReset.getTime() / 1000);
-
         const successEmbed = new EmbedBuilder()
-            .setTitle(result.bonusAmount > 0 ? `🔥 Streak Bonus Activated!` : `🍯 Daily Harvest Successful!`)
+            .setTitle(result.bonusAmount > 0 ? `🌻 Pollination Bonus!` : `🍯 Honey Harvest Success!`)
             .setColor('#fbbf24') // Golden Bee
             .setDescription(result.bonusAmount > 0 
-                ? `Incredible! Your **Day ${result.newStreak}** streak earned you a **+${result.bonusAmount} Zap** bonus!`
-                : `You've gathered your daily Zaps. Keep your streak alive to earn massive bonuses!`)
+                ? `Incredible! Your **Day ${result.newStreak}** pollination streak earned you a **+${result.bonusAmount} Zap** bonus jar!`
+                : `You've gathered your daily Zaps. Keep your streak alive to fill your jars with massive bonuses!`)
             .setThumbnail('https://cdn-icons-png.flaticon.com/512/3062/3062331.png')
             .addFields(
-                { name: '⚡ Total Reward', value: `**${result.rewardAmount}** Zaps`, inline: true },
-                { name: '🔥 Streak', value: `**Day ${result.newStreak}**`, inline: true },
-                { name: '💰 New Balance', value: `**${result.newBalance.toFixed(1)}** Zaps`, inline: true },
-                { name: '📅 Next Reset', value: `<t:${nextResetTs}:R>`, inline: false }
+                { name: '🍯 Fresh Honey', value: `**${result.rewardAmount}** Zaps`, inline: true },
+                { name: '🌻 Streak', value: `**Day ${result.newStreak}**`, inline: true },
+                { name: '🏦 Jar Balance', value: `**${result.newBalance.toFixed(1)}** Zaps`, inline: true },
+                { name: '🕒 Next Harvest', value: `<t:${Math.floor(new Date().setUTCHours(24, 0, 0, 0) / 1000)}:R>`, inline: false }
             )
-            .setFooter({ text: 'DreamBees Discord Universe • Separate from Web App' })
+            .setFooter({ text: 'DreamBees Hive • Keep your wings fluttering!' })
             .setTimestamp();
 
         // 3. Telemetry & Cooldown

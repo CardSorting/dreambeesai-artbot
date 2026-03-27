@@ -44,13 +44,13 @@ export async function execute(interaction) {
     if (isUnsafe) {
         logger.warn(`Unsafe prompt rejected`, { discordId, discordTag, originalPrompt });
         return interaction.reply({ 
-            content: `🛑 **Safety Alert!** Your prompt contains prohibited terms. Please keep it clean and creative!`, 
+            content: `🛑 **Queen's Guard Alert!** Your prompt contains prohibited terms. Please keep it clean and creative!`, 
             ephemeral: true 
         });
     }
 
     if (prompt.length < 3) {
-        return interaction.reply({ content: '❌ **Error!** Please provide a valid prompt (at least 3 characters).', ephemeral: true });
+        return interaction.reply({ content: '🐝 **Bzzzzt!** We need a real nectar source to start! (Prompt too short)', ephemeral: true });
     }
 
     // 2. Fetch or Create Discord User Profile
@@ -59,7 +59,7 @@ export async function execute(interaction) {
     // 3. Pre-flight Balance Check
     if ((userData.zaps || 0) < TOTAL_COST) {
         return interaction.reply({ 
-            content: `❌ **Insufficient Zaps!** This generation costs **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nYou can earn more Zaps by participating in community events!`, 
+            content: `🍯 **Empty Jar!** This harvest requires **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nYou can earn more Zaps by participating in community events!`, 
             ephemeral: true 
         });
     }

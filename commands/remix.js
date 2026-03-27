@@ -2,6 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, But
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 import { saveGeneration, getUserByDiscordId } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
+import * as Hive from '../lib/hive.js';
 
 export const data = new SlashCommandBuilder()
     .setName('remix')

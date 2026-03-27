@@ -2,13 +2,16 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelec
 import { getGeneration, getUserByDiscordId } from '../lib/db.js';
 import sharp from 'sharp';
 import { logger } from '../lib/logger.js';
-import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
+import { fetchWithTimeout, keepAliveAgent, registerDiscordGrid } from '../lib/api/dreambees.js';
+import { Wallet } from '../lib/wallet.js';
+import * as Hive from '../lib/hive.js';
+import { CONFIG } from '../lib/config-check.js';
 
 export const customIdPrefix = 'mockup_';
 
-const MOCKUP_COST = 0.50;
-const GACHA_COST = 0.25;
-const GRID_COST = 1.00;
+const MOCKUP_COST = CONFIG.COSTS.MOCKUP;
+const GACHA_COST = CONFIG.COSTS.GACHA;
+const GRID_COST = CONFIG.COSTS.GRID;
 
 const PRODUCTS = [
     { label: '💿 Vinyl Record', value: 'vinyl_record', description: 'Classic 12" record sleeve' },
@@ -161,8 +164,16 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
     const product = PRODUCTS.find(p => p.value === itemId);
     const env = ENVIRONMENTS.find(e => e.value === envId);
 
+    // REAL FINANCIAL DEBIT
+    const requestId = `mockup_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, MOCKUP_COST, requestId, { action: 'mockup_render', itemId, envId });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(MOCKUP_COST, 0), components: [] });
+    }
+
     await interaction.editReply({ 
-        content: `✨ **Alchemist at work...** Rendering **${product.label}** with **${env.label}** lighting via Vertex AI Imagen 006.`,
+        content: `✨ **Hive Worker at work...** Refining **${product.label}** with **${env.label}** nectar via Vertex AI.`,
         embeds: [], components: [] 
     });
 
@@ -191,10 +202,10 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
         
         const embed = new EmbedBuilder()
             .setTitle(`✨ ${product.label} • ${env.label}`)
-            .setDescription(`Your professional render is complete. Credits deducted from your Soul Zaps balance. ${dreambeesUid ? '\n\n✅ **Saved to your collection!**' : ''}`)
+            .setDescription(`Your professional honey-render is complete. Credits harvested from your **Honey Jar**. ${dreambeesUid ? '\n\n✅ **Saved to your Hive Collection!**' : ''}`)
             .setImage(result.url)
-            .setColor('#7289da')
-            .setFooter({ text: 'DreamBees Alchemist • Universal Mockup Studio' });
+            .setColor('#fbbf24') // Golden Bee
+            .setFooter({ text: 'DreamBees Hive • Universal Mockup Studio' });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -228,6 +239,14 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
 
     const product = PRODUCTS.find(p => p.value === itemId);
     const chosenEnvs = ENVIRONMENTS.slice(0, 4).map(e => e.value);
+
+    // REAL FINANCIAL DEBIT
+    const requestId = `grid_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, GRID_COST, requestId, { action: 'mockup_grid', itemId });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(GRID_COST, 0), components: [] });
+    }
 
     await interaction.editReply({ 
         content: `🪄 **Generating Elite 4-Grid...** Creating 4 distinct high-fidelity environments for your **${product.label}**.`,
@@ -284,10 +303,10 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
 
         const embed = new EmbedBuilder()
             .setTitle(`🪄 Elite 4-Grid: ${product.label}`)
-            .setDescription(`High-fidelity visualization across Studio, Marble, Shadow Play, and Otaku Room. Credits deducted.`)
-            .setColor('#facc15')
+            .setDescription(`High-fidelity visualization across Studio, Marble, Shadow Play, and Otaku Room. Credits harvested from your **Honey Jar**.`)
+            .setColor('#fbbf24') // Golden Bee
             .setImage('attachment://mockup-grid.jpg')
-            .setFooter({ text: 'DreamBees Alchemist • Universal Mockup Studio' });
+            .setFooter({ text: 'DreamBees Hive • Universal Mockup Studio' });
 
         const row = new ActionRowBuilder().addComponents(
              new ButtonBuilder()
@@ -317,8 +336,16 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
     const generationData = await getGeneration(originalInteractionId);
     const dreambeesUid = generationData.dreambeesUid;
 
+    // REAL FINANCIAL DEBIT
+    const requestId = `gacha_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, GACHA_COST, requestId, { action: 'mockup_gacha' });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(GACHA_COST, 0), components: [] });
+    }
+
     await interaction.editReply({ 
-        content: `🎰 **Spinning the Gacha...** May the Alchemist favor you!`,
+        content: `🎰 **Spinning the Gacha...** May the Queen favor you!`,
         embeds: [], components: [] 
     });
 
@@ -345,9 +372,9 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
         
         const embed = new EmbedBuilder()
             .setTitle(`🎰 Gacha Win: ${result.item.label}`)
-            .setDescription(`You pulled a **${result.item.label}** in **${result.preset.label}**! ${dreambeesUid ? '\n\n✅ **Saved to your collection!**' : ''}`)
+            .setDescription(`You pulled a **${result.item.label}** in **${result.preset.label}**! ${dreambeesUid ? '\n\n✅ **Saved to your Hive Collection!**' : ''}`)
             .setImage(result.url)
-            .setColor('#facc15');
+            .setColor('#fbbf24'); // Golden Bee
 
         const row = new ActionRowBuilder().addComponents(
              new ButtonBuilder()

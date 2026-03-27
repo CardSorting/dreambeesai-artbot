@@ -3,6 +3,7 @@ import { getOrCreateDiscordUser } from '../lib/db.js';
 import { performGeneration } from '../lib/generator.js';
 import { MODELS, calculateBatchCost } from '../lib/models.js';
 import { logger } from '../lib/logger.js';
+import * as Hive from '../lib/hive.js';
 
 export const category = 'image';
 
@@ -11,23 +12,6 @@ const MODEL_CONFIG = MODELS[MODEL_ID];
 const BATCH_SIZE = 4;
 const TOTAL_COST = calculateBatchCost(MODEL_ID, BATCH_SIZE);
 
-const SAFETY_BLOCKLIST = [
-    'nsfw', 'porn', 'gore', 'violence', 'blood', 'sex', 'nude', 'naked',
-    'hentai', 'r18', 'erotica', 'undress', 'lingerie'
-];
-
-/**
- * Advanced sanitization to remove emojis, excess whitespace, 
- * and hidden character bypasses.
- */
-function sanitizePrompt(text) {
-    if (!text) return '';
-    return text
-        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F093}\u{1F191}-\u{1F251}\u{2B50}]/gu, '')
-        .replace(/[^\x20-\x7E\s]/g, '') // Remove non-printable characters
-        .replace(/\s+/g, ' ')
-        .trim();
-}
 
 export const data = new SlashCommandBuilder()
     .setName('dream')
@@ -42,22 +26,16 @@ export async function execute(interaction) {
     const discordId = interaction.user.id;
     const discordTag = interaction.user.tag;
     let originalPrompt = interaction.options.getString('prompt');
-    const prompt = sanitizePrompt(originalPrompt);
+    const prompt = Hive.refineNectar(originalPrompt);
 
-    // 1. Safety Checks
-    const lowerPrompt = prompt.toLowerCase();
-    const isUnsafe = SAFETY_BLOCKLIST.some(word => lowerPrompt.includes(word));
-    
-    if (isUnsafe) {
+    // 1. Safety Checks (Queen's Guard)
+    if (!Hive.guardHive(prompt)) {
         logger.warn(`Unsafe prompt rejected`, { discordId, discordTag, originalPrompt });
-        return interaction.reply({ 
-            content: `🛑 **Queen's Guard Alert!** Your prompt contains prohibited terms. Please keep it clean and creative!`, 
-            ephemeral: true 
-        });
+        return interaction.reply({ content: Hive.Voice.safety, ephemeral: true });
     }
 
     if (prompt.length < 3) {
-        return interaction.reply({ content: '🐝 **Bzzzzt!** We need a real nectar source to start! (Prompt too short)', ephemeral: true });
+        return interaction.reply({ content: Hive.Voice.shortNectar, ephemeral: true });
     }
 
     // 2. Fetch or Create Discord User Profile
@@ -66,7 +44,7 @@ export async function execute(interaction) {
     // 3. Pre-flight Balance Check
     if ((userData.zaps || 0) < TOTAL_COST) {
         return interaction.reply({ 
-            content: `🍯 **Empty Jar!** This harvest requires **${TOTAL_COST} Zaps**, but you only have **${(userData.zaps || 0).toFixed(1)}**. \n\nYou can earn more Zaps by participating in community events!`, 
+            content: Hive.Voice.emptyJar(TOTAL_COST, userData.zaps || 0), 
             ephemeral: true 
         });
     }

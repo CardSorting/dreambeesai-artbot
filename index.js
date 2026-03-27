@@ -1,60 +1,22 @@
-import { Client, GatewayIntentBits, Collection } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
-import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId } from './lib/db.js';
+import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db } from './lib/db.js';
 import { ThreadedInteraction } from './lib/discord-ux.js';
 
-dotenv.config();
+// --- CONFIGURATION ---
+import { validateConfig, CONFIG } from './lib/config-check.js';
+validateConfig(); 
+// ---------------------
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function validateEnvironment() {
-    const required = [
-        'DISCORD_TOKEN', 
-        'DISCORD_CLIENT_ID', 
-        'DREAMBEES_API_URL', 
-        'DREAMBEES_API_KEY',
-        'B2_BUCKET',
-        'B2_ENDPOINT',
-        'B2_REGION',
-        'B2_KEY_ID',
-        'B2_APP_KEY',
-        'B2_PUBLIC_URL'
-    ];
+// Logic moved to lib/config-check.js
 
-    const missing = required.filter(k => !process.env[k]);
-
-    const projectVars = ['GCLOUD_PROJECT', 'FIREBASE_PROJECT_ID'];
-    const hasProject = projectVars.some(k => !!process.env[k]);
-    if (!hasProject) {
-        missing.push('GCLOUD_PROJECT or FIREBASE_PROJECT_ID');
-    }
-    
-    // Conditional Firebase check
-    const hasServiceAccountFile = fs.existsSync(path.resolve(process.cwd(), './serviceAccountKey.json'));
-    const hasServiceAccountJson = !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    const hasIndividualVars = process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY;
-
-    if (!hasServiceAccountFile && !hasServiceAccountJson && !hasIndividualVars && !process.env.FIREBASE_API_KEY) {
-        missing.push('FIREBASE_CREDENTIALS (JSON, File, or API Key)');
-    }
-
-    if (missing.length > 0) {
-        logger.error(`CRITICAL: Missing required environment variables: ${missing.join(', ')}`);
-        process.exit(1);
-    }
-
-    try {
-        new URL(process.env.DREAMBEES_API_URL);
-    } catch {
-        logger.error(`CRITICAL: Invalid DREAMBEES_API_URL format.`);
-        process.exit(1);
-    }
-}
 
 function startHeartbeat(activeJobs) {
     setInterval(() => {

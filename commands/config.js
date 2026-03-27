@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
 import { setGuildConfig, getGuildConfig } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
+import * as Hive from '../lib/hive.js';
 
 export const category = 'admin';
 
@@ -40,9 +41,12 @@ export async function execute(interaction) {
         summary.push(`✅ **Auto-Hide Threshold**: ${threshold} reports`);
     }
 
+    const isResident = await Hive.isResiding(interaction);
+    const residencyLabel = isResident ? '✅ **Hive Resident**' : `❌ **Guest** (Join [The Hive](${Hive.INVITE_LINK}))`;
+
     if (summary.length === 0) {
         return interaction.reply({ 
-            content: `⚙️ **Current Configuration:**\n- Mod Log Channel: ${currentConfig.modLogChannelId ? `<#${currentConfig.modLogChannelId}>` : 'Not Set'}\n- Auto-Hide Threshold: **${currentConfig.reportThreshold || 3}**`, 
+            content: `⚙️ **Guild Configuration:**\n- Mod Log: ${currentConfig.modLogChannelId ? `<#${currentConfig.modLogChannelId}>` : 'Not Set'}\n- Auto-Hide: **${currentConfig.reportThreshold || 3}** reports\n\n🐝 **Your Status:** ${residencyLabel}`, 
             ephemeral: true 
         });
     }

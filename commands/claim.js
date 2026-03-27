@@ -3,6 +3,7 @@ import { Wallet } from '../lib/wallet.js';
 import { logger } from '../lib/logger.js';
 import { tryLock, releaseLock, setCooldown, getRemainingCooldown } from '../lib/db.js';
 import { recordClaimMetrics } from '../lib/metrics.js';
+import * as Hive from '../lib/hive.js';
 
 export const category = 'utility';
 
@@ -11,28 +12,16 @@ export const data = new SlashCommandBuilder()
     .setDescription('Claim your daily 100 Zaps reward! 🐝');
 
 export async function execute(interaction) {
+    const startTime = Date.now();
     const discordId = interaction.user.id;
     const guildId = interaction.guildId;
-    const startTime = Date.now();
-    const targetGuildId = process.env.DREAMBEES_GUILD_ID || '1275879277895745536';
-
+    
     // 1. Server Membership Check (Exclusive to DreamBees)
-    let isServerMember = guildId === targetGuildId;
-    if (!isServerMember) {
-        try {
-            const guild = await interaction.client.guilds.fetch(targetGuildId).catch(() => null);
-            if (guild) {
-                const member = await guild.members.fetch(discordId).catch(() => null);
-                if (member) isServerMember = true;
-            }
-        } catch (e) {
-            logger.error(`Membership check failed for ${discordId}`, e);
-        }
-    }
+    const isServerMember = await Hive.isResiding(interaction);
 
     if (!isServerMember) {
         return interaction.reply({ 
-            content: `🚫 **Harvest Restricted!** 🐝\n\nYour daily Zaps are kept safe inside the **DreamBees Hive**. To unlock your daily rewards and join the community of creators, please join our official server!\n\n✨ **Unlock your rewards here:** https://discord.com/invite/curMHRAN8y`, 
+            content: Hive.Voice.restriction, 
             ephemeral: true 
         });
     }

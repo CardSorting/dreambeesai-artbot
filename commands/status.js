@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { getOrCreateDiscordUser, db, getRemoteConfig } from '../lib/db.js';
+import * as Hive from '../lib/hive.js';
 
 export const category = 'utility';
 
@@ -36,18 +37,10 @@ export async function execute(interaction) {
             { name: '🕒 First Flight', value: userData.joinedAt ? `<t:${Math.floor(userData.joinedAt.toDate().getTime() / 1000)}:R>` : 'Just merged!', inline: true }
         );
 
-    const targetGuildId = process.env.DREAMBEES_GUILD_ID || '1275879277895745536';
-    let isServerMember = interaction.guildId === targetGuildId;
-    if (!isServerMember) {
-        const guild = await interaction.client.guilds.fetch(targetGuildId).catch(() => null);
-        if (guild) {
-            const member = await guild.members.fetch(discordId).catch(() => null);
-            if (member) isServerMember = true;
-        }
-    }
+    const isServerMember = await Hive.isResiding(interaction);
 
     if (!isServerMember) {
-        statusEmbed.addFields({ name: '🎁 Daily Reward', value: `🔒 **Vaulted Reward!** Join the official **DreamBees server** to unlock your daily honey.\n🐝 [Join the Hive](https://discord.com/invite/curMHRAN8y)`, inline: false });
+        statusEmbed.addFields({ name: '🎁 Daily Reward', value: `🔒 **Vaulted Reward!** Join the official **DreamBees server** to unlock your daily honey.\n🐝 [Join the Hive](${Hive.INVITE_LINK})`, inline: false });
     } else if (isAvailable) {
         statusEmbed.addFields({ name: '🎁 Daily Reward', value: `🟢 Available! Use \`/claim\` to get your ${baseReward} Zaps!`, inline: false });
     } else {

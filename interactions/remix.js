@@ -1,10 +1,11 @@
-import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { getGeneration, getUserByDiscordId, saveGeneration } from '../lib/db.js';
+import { db, getGeneration, getUserByDiscordId, saveGeneration } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
-import { db } from '../lib/db.js';
 import { stitchImages, validateImageBuffer, stitchSideBySide, stitchNarrativeStrip } from '../lib/image-processor.js';
 import { uploadToS3 } from '../lib/s3.js';
+import { Wallet } from '../lib/wallet.js';
+import * as Hive from '../lib/hive.js';
+import { CONFIG } from '../lib/config-check.js';
 
 const VIBE_INSTRUCTIONS = {
     cyberpunk: "apply a cyberpunk aesthetic with neon lights, futuristic cityscape elements, and a high-tech atmosphere",
@@ -19,6 +20,11 @@ const PRISM_INSTRUCTIONS = {
     primal: "project into the Primal Realm: overgrown flora, ancient stone, and raw natural power",
     gothic: "project into the Gothic Realm: shattered shadows, Victorian macabre, and obsidian elegance"
 };
+
+const REMIX_COST = CONFIG.COSTS.REMIX;
+const PRISM_COST = CONFIG.COSTS.PRISM;
+const VARIATION_COST = CONFIG.COSTS.VARIATION;
+const MATCH_COST = CONFIG.COSTS.MATCH;
 
 export async function execute(interaction) {
     const parts = interaction.customId.split('_');
@@ -85,6 +91,14 @@ async function handleSummonPrism(interaction, originalInteractionId, imageIndex)
     const userProfile = await getUserByDiscordId(interaction.user.id);
     if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
 
+    // REAL FINANCIAL DEBIT
+    const requestId = `prism_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, PRISM_COST, requestId, { action: 'prism_render' });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(PRISM_COST, userProfile.zaps || 0) });
+    }
+
     await interaction.editReply({ content: '💎 **Summoning the Prism...** Splitting the vision into 4 divergent dimensions.' });
 
     try {
@@ -136,11 +150,22 @@ async function handleShowMatchModal(interaction, originalInteractionId, imageInd
 
 async function handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions) {
     await interaction.deferReply({ ephemeral: true });
-    const userDoc = await db.collection('users').doc(interaction.user.id).get();
-    const styleMimic = userDoc.data()?.currentStyleMimic;
+    
+    // Fix collection name and use centralized profile
+    const userProfile = await getUserByDiscordId(interaction.user.id);
+    if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
+    
+    const styleMimic = userProfile.currentStyleMimic;
 
     const generationData = await getGeneration(originalInteractionId);
-    const userProfile = await getUserByDiscordId(interaction.user.id);
+
+    // REAL FINANCIAL DEBIT
+    const requestId = `match_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, MATCH_COST, requestId, { action: 'dna_match' });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(MATCH_COST, userProfile.zaps || 0) });
+    }
 
     await interaction.editReply({ content: '🌈 **Extracting Visual DNA...** Preparing to manifest a matched companion.' });
 
@@ -223,6 +248,14 @@ async function handleExploreVariations(interaction, originalInteractionId, image
     const userProfile = await getUserByDiscordId(interaction.user.id);
     if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
 
+    // REAL FINANCIAL DEBIT
+    const requestId = `variations_${interaction.id}`;
+    try {
+        await Wallet.debit(interaction.user.id, VARIATION_COST, requestId, { action: 'exploration' });
+    } catch (err) {
+        return interaction.editReply({ content: Hive.Voice.emptyJar(VARIATION_COST, userProfile.zaps || 0) });
+    }
+
     await interaction.editReply({ content: '🧭 **Exploring the Neighborhood...** Probing 4 creative levels simultaneously.' });
 
     try {
@@ -260,7 +293,7 @@ async function handleLockStyle(interaction, originalInteractionId, imageIndex) {
     if (!generationData) return interaction.editReply({ content: '❌ Data not found.' });
 
     // Store the style (prompt) in the user's profile for mimicry
-    const userRef = db.collection('users').doc(interaction.user.id);
+    const userRef = db.collection('discord_users').doc(interaction.user.id);
     await userRef.set({
         currentStyleMimic: {
             prompt: generationData.prompt,

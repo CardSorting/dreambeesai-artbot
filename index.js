@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
 import { cleanupStaleLocks, recoverZombieTransactions } from './lib/db.js';
+import { ThreadedInteraction } from './lib/discord-ux.js';
 
 dotenv.config();
 
@@ -124,13 +125,30 @@ export async function handleInteraction(interaction, client, activeJobs) {
 
             activeJobs.add(interaction.id);
             
-            // Enforce thread-only restriction for image generation
+            // Enforce thread-only restriction for image generation with seamless transition
             if (command.category === 'image' && !interaction.channel.isThread()) {
-                await interaction.reply({ 
-                    content: '❌ **Threads Only!** To prevent spam in general channels, images can only be generated within a thread. Please create a thread to start creating!', 
-                    ephemeral: true 
-                });
-                return;
+                try {
+                    const thread = await interaction.channel.threads.create({
+                        name: `🎨 ${interaction.user.username}'s ${command.data.name}`,
+                        autoArchiveDuration: 60,
+                        reason: 'Seamless image generation'
+                    });
+
+                    await interaction.reply({ 
+                        content: `✅ **Magic incoming!** I've created a dedicated thread for your creation: ${thread.toString()}. Let's move there!`, 
+                        ephemeral: true 
+                    });
+
+                    const threadedInteraction = new ThreadedInteraction(interaction, thread);
+                    return await command.execute(threadedInteraction);
+                } catch (e) {
+                    logger.error("Failed to create seamless thread", e);
+                    // Fallback to original behavior if thread creation fails
+                    return await interaction.reply({ 
+                        content: '❌ **Threads Only!** Please create a thread to start creating! (Automatic thread creation failed)', 
+                        ephemeral: true 
+                    });
+                }
             }
 
             await command.execute(interaction);

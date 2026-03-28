@@ -148,15 +148,16 @@ $$ R(\tau) = B + \min((\tau - 1) \cdot \beta, M) $$
 #### 🕒 Temporal Constraint (The 48h Window)
 The streak state $\tau$ at interval $n+1$ is modeled as a discrete state transition governed by the **Theorem of Continuity ($\Theta$)**. This theorem defines the valid temporal boundaries $\Delta t = t_{n+1} - t_n$ for which a streak remains monotonic.
 
-$$ \Theta = \lbrace (t_{n}, t_{n+1}) \mid \Delta t \in [24\mathrm{h}, 48\mathrm{h}] \rbrace $$
+$$ \Theta = \{ (t_{n}, t_{n+1}) \mid \Delta t \in [24\text{h}, 48\text{h}] \} $$
 
 **Transition Function ($F$):**
 The system's state machine mapping $F(s_{n}, t_{n+1})$ defines the behavioral outcomes for each interaction:
+
 $$
-F(s_{n}, t_{n+1}) = \begin{cases}
-\mathrm{Continuous}(\tau_{n} + 1) & \text{if } \Delta t \in \Theta \\
-\mathrm{Reset}(1) & \text{if } \Delta t > 48\mathrm{h} \\
-\mathrm{Blocked} & \text{if } \Delta t < 24\mathrm{h}
+F(s_{n}, t_{n+1}) = \begin{cases} 
+\text{Continuous}(\tau_{n} + 1) & \text{if } \Delta t \in \Theta \\
+\text{Reset}(1) & \text{if } \Delta t > 48\text{h} \\
+\text{Blocked} & \text{if } \Delta t < 24\text{h}
 \end{cases}
 $$
 

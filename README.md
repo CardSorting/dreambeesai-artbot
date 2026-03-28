@@ -1,138 +1,186 @@
-# 🐝 DreamBees Discord Bot
+# 🐝 DreamBees Orchestration Engine
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Node](https://img.shields.io/badge/Node-v20+-green.svg)](https://nodejs.org/)
 [![Discord](https://img.shields.io/badge/Discord-Hive-blue.svg?logo=discord&logoColor=white)](https://discord.com/invite/curMHRAN8y)
-[![Status](https://img.shields.io/badge/Inference-Modal-purple.svg)](https://modal.com)
-
-DreamBees is a high-performance, feature-rich Discord bot designed for AI-powered creative workflows. It brings state-of-the-art image generation and manipulation directly to your Discord server, featuring a robust economy system and enterprise-grade safety controls.
+[![Inference Status](https://img.shields.io/badge/Inference-Modal_GPU-purple.svg)](https://modal.com)
 
 ---
 
-### 🚀 [Getting Started](#🚀-getting-started) • 📖 [Commands](#📖-command-reference) • 🧠 [Knowledge Base](#🧠-knowledge-base) • 🩺 [Troubleshooting](#🩺-troubleshooting) • 🤝 [Support](#🤝-community--support)
+### **Abstract**
+DreamBees is a high-performance, distributed orchestration engine designed to bridge the gap between large-scale Discord communities and state-of-the-art Generative AI inference. Built on a cloud-native architecture of **Node.js**, **Google Firestore**, and **Modal**, DreamBees provides a deterministic environment for multi-modal image generation, surgical creative edits (Remixing), and a resilient financial economy—all while maintaining enterprise-grade safety through its multi-layered "Queen's Guard" moderation protocol.
 
 ---
 
-## 📑 Table of Contents
+## 🏛️ System Architecture
 
-- [✨ Key Features](#✨-key-features)
-- [🛠️ Prerequisites](#🛠️-prerequisites)
-- [🚀 Getting Started](#🚀-getting-started)
-- [📖 Command Reference](#📖-command-reference)
-- [🏗️ Project Architecture](#🏗️-architecture)
-- [🧠 Knowledge Base (Internal Docs)](#🧠-knowledge-base)
-- [🤝 Community & Support](#🤝-community--support)
-- [📄 License](#📄-license)
+DreamBees operates as a centralized state-machine, delegating compute-heavy inference to serverless GPU clusters and preserving environmental state through atomic database transitions.
 
----
+### Infrastructure Topology
+```mermaid
+graph TD
+    User((👤 Discord User))
+    DC[🐝 Discord API Gateway]
+    Bot[🚀 DreamBees Orchestrator]
+    FS[(🔥 Firestore State)]
+    S3[(📦 Backblaze B2/S3)]
+    Modal[🧠 Modal GPU Cluster]
+    Hive[🛡️ Queen's Guard Security]
 
-## ✨ Key Features
-
-- **🎨 Multi-Model Image Generation**: Generate artwork via `/dream` (Illustrious) and `/flash` (Rapid).
-- **🔄 Advanced Remixing**: Perform surgical image edits and style transformations with the `/remix` suite.
-- **⚡ Zap Economy**: Integrated currency system ("Zaps") to manage generation costs and rewards.
-- **🛡️ Queen's Guard (Hive Security)**: Sophisticated prompt filtering and safety layers to protect the community.
-- **📦 Cloud-Native Architecture**: Built with Node.js, leveraging Firebase and Backblaze B2/S3.
-- **🚀 Modal Integration**: High-speed, GPU-accelerated AI inference powered by Modal.
-
----
-
-## 🛠️ Prerequisites
-
-- **Node.js**: `v20.x` or higher (Uses ESM)
-- **Firebase Project**: For Firestore database (Users, Generations, Transactions).
-- **Backblaze B2 / S3**: For storing generated assets.
-- **Discord Developer Account**: To create and manage your bot application.
-- **Modal Account**: For AI inference endpoints.
-
----
-
-## 🚀 Getting Started
-
-### 1. Clone & Install
-```bash
-git clone https://github.com/your-repo/DreamBees-DiscordBot.git
-cd DreamBees-DiscordBot
-npm install
+    User <--> DC
+    DC <--> Bot
+    Bot <--> FS
+    Bot <--> Hive
+    Bot --> Modal
+    Modal --> Bot
+    Bot --> S3
+    S3 --> User
 ```
 
-### 2. Configure Environment
-Copy the example environment file and fill in your credentials:
-```bash
-cp .env.example .env
-```
-*Required: Discord tokens, Firebase service account, B2 credentials, and Modal endpoints.*
+### Generation Lifecycle (Request Sequence)
+The following sequence diagram illustrates the lifecycle of a high-fidelity generation request, emphasizing the synchronous validation and asynchronous asset persistence.
 
-### 3. Initialize & Register
-```bash
-# Verify config before starting
-npm run verify
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant DC as 🐝 DreamBees (Node.js)
+    participant FB as 🔥 Firestore (State)
+    participant Hive as 🛡️ Hive (Security)
+    participant Modal as 🧠 Modal (Inference)
+    participant B2 as 📦 B2/S3 (Storage)
 
-# Register slash commands with Discord
-npm run register
-```
-
-### 4. Start the Hive
-```bash
-# Development
-node index.js
-
-# Production
-pm2 start index.js --name "dreambees-bot"
+    User->>DC: /dream {prompt}
+    DC->>FB: Check Distributed Lock & Cooldown
+    FB-->>DC: Permission Granted
+    DC->>Hive: Queen's Guard Entropy Scan
+    Hive-->>DC: Validation Success (Nectar Refined)
+    DC->>FB: Wallet.debit(zaps, transactionID)
+    FB-->>DC: Atomic Success
+    
+    DC->>Modal: Parallel Inference Request (Batch x4)
+    Modal-->>DC: Image Buffer Stream
+    DC->>B2: Asynchronous Asset Persistence
+    B2-->>DC: Secure S3 Object URLs
+    
+    DC->>DC: Composition & Stitching (Sharp)
+    DC->>B2: Final Grid Persistence
+    B2-->>DC: Public Asset URL
+    
+    DC->>FB: commitHistory(meta_data)
+    DC->>User: Render Interactive Embed + Evolution Controls
+    
+    DC->>FB: Release Mutex & Enforce Cooldown
 ```
 
 ---
 
-## 📖 Command Reference
+## 🧪 Technical Pillars
 
-| Command | Description | Cost |
-| :--- | :--- | :--- |
-| `/dream` | Generate high-quality images from a text prompt. | ⚡ Variable |
-| `/flash` | Rapid image generation for quick iterations. | ⚡ Variable |
-| `/remix` | Transform or evolve an existing image. | ⚡ Variable |
-| `/claim` | Daily rewards and Zap collection. | — |
-| `/status` | Check your wallet balance and bot health. | — |
-| `/config` | Server-specific configuration (Admin only). | — |
+### 1. Tiered Inference Orchestration
+Integration with **Modal** allows for dynamic, serverless scaling of GPU-accelerated inference. DreamBees supports multiple latent diffusion models (SDXL, Flux, Illustrious) through unified API endpoints, ensuring rapid response times even during high-concurrency periods.
 
----
+### 2. Deterministic "Zap" Economy
+All financial transactions are governed by the **Zap Protocol**, which leverages Google Firestore's multi-document atomic transactions. This ensuring absolute financial integrity and prevents race conditions during high-volume generation cycles (e.g., simultaneous claims or multi-batch generations).
 
-## 🏗️ Architecture
-
-- **Core Engine**: `index.js` (Root Orchestrator)
-- **Slash Commands**: `commands/` (Command logic)
-- **Hive Logic**: `lib/`
-  - `generator.js`: The image generation workflow manager.
-  - `hive.js`: Security gatekeeper and moderation.
-  - `db/`: Firestore interaction layer.
-- **Interaction Handlers**: `interactions/` (Button and Modal processing)
+### 3. The Queen's Guard (Hive Security)
+A multi-layered safety framework that performs:
+- **Lexical Analysis**: Filtering sensitive tokens at the ingress layer.
+- **Latent Safety**: Post-inference visual auditing.
+- **Automated Abuse Backoff**: Dynamic restriction of malicious actors based on interaction frequency.
 
 ---
 
-## 🧠 Knowledge Base
+## 🚀 Deployment & Operations
 
-Explore deep technical documentation for the DreamBees ecosystem:
+### Prerequisites
+- **Runtime**: Node.js `v20.x` (ESM)
+- **State Database**: Google Cloud Firestore
+- **Asset Storage**: Backblaze B2 or S3-compatible storage
+- **Compute Cluster**: Modal CLI & Account credentials
 
-- **[🏛️ Architecture Overview](./docs/architecture.md)**: Service design and generation sequence diagrams.
-- **[🛡️ Safety & Moderation](./docs/safety.md)**: Deep dive into the Queen's Guard and Hive security.
-- **[⚡ Zap Economy](./docs/economy.md)**: Transaction lifecycle and financial integrity via Firestore.
-- **[📊 Data Model](./docs/data-model.md)**: Firestore ERD and storage strategy.
-- **[🧬 Evolution UX & Advanced Interactions](./docs/ux-interactions.md)**: Guide to surgical edits, lineage murals, and the Prism of Dimensions.
-- **[🚢 Deployment & DevOps](./docs/deployment.md)**: GCE "Always-On" setup and Dockerization.
-- **[🛠️ Developer Toolkit](./docs/toolkit.md)**: Guide to administrative and maintenance scripts.
-- **[🩺 Troubleshooting](./docs/troubleshooting.md)**: Common errors, lock resets, and connectivity diagnostics.
+### Setup Procedure
+
+1. **Clone & Initialize**
+   ```bash
+   git clone https://github.com/DreamBees-AI/DreamBees-DiscordBot.git
+   cd DreamBees-DiscordBot && npm install
+   ```
+
+2. **Environment Configuration**
+   ```bash
+   cp .env.example .env
+   # Populate with DISCORD_TOKEN, FIREBASE_CONFIG, B2_ENDPOINT, and MODAL_API_KEY
+   ```
+
+3. **Orchestration Verification**
+   ```bash
+   npm run verify    # Validates database and storage connectivity
+   npm run register  # Deploys Discord Global Command Schema
+   ```
+
+4. **Production Startup**
+   ```bash
+   pm2 start index.js --name "dreambees-core" --exp-backoff-restart-delay 1000
+   ```
 
 ---
 
-## 🤝 Community & Support
+---
 
-- **Official Discord**: Join the [DreamBees Hive](https://discord.com/invite/curMHRAN8y) for support, updates, and feedback.
-- **Contributing**: Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for local development guidelines.
+## ⚡ Mathematical Foundations (Zap Economy)
+
+DreamBees implements a deterministic resource management system where user interactions are governed by formal distribution and consumption functions.
+
+### Resource Distribution (Daily Claims)
+The reward function $R(\tau)$ for a user with streak $\tau$ is defined as:
+$$ R(\tau) = B + \min((\tau - 1) \cdot \beta, M) $$
+Where $B$ is the base reward, $\beta$ is the streak bonus, and $M$ is the maximum cap.
+
+### Resource Consumption (Inference Costs)
+The batch cost function $C(\mu, n)$ for model $\mu$ and batch size $n$ is:
+$$ C(\mu, n) = \lceil n \cdot \kappa_\mu + \gamma \rceil $$
+Where $\kappa_\mu$ is the per-image model cost and $\gamma$ is the system orchestration overhead.
+
+---
+
+## 🔬 Future Research & Development (R&D)
+
+The DreamBees team is continuously exploring advanced orchestration techniques to bridge the gap between creative freedom and system stability:
+
+- **Predictive Resource Allocation**: Heuristic models to pre-warm GPU clusters based on Discord interaction peaks.
+- **Latent Space Auditing**: Integrating post-inference visual safety checks to catch high-fidelity artifacts.
+- **Semantic Interaction Tracing**: Mapping recursive creativity (Remixes) to visualize lineage murals across the user base.
+
+---
+
+## 📖 Glossary of Terms
+
+| Term | Technical Definition |
+| :--- | :--- |
+| **Nectar** | Raw user-provided text prompt input before preprocessing. |
+| **Hive** | The unified Discord ecosystem and service cluster. |
+| **Queen's Guard** | The multi-layered safety and moderation protocol ($S(I)$). |
+| **Zap** | The primary unit of currency used to manage inference resources. |
+| **Orchestrator** | The Node.js core responsible for state machine management. |
+| **Prism of Dimensions** | The multi-modal generation interface for creative exploration. |
+
+---
+
+## 🧠 Technical Documentation (Deep Dive)
+
+- **[🏛️ Architecture Overview](./docs/architecture.md)**: Logic flows and service definitions.
+- **[🛡️ Safety & Moderation](./docs/safety.md)**: Queen's Guard logic and security tiers.
+- **[⚡ Zap Economy](./docs/economy.md)**: Transactional lifecycle and financial auditing.
+- **[📊 Data Model](./docs/data-model.md)**: Schema Definitions and ERDs.
+- **[🧬 Evolution UX](./docs/ux-interactions.md)**: Surgical edits and lineage murals.
+- **[📜 Technical Specification (Whitepaper)](./docs/SPECIFICATION.md)**: Formal system specification and models.
+
+---
+
+## 🤝 Community & Contribution
+
+- **Discord**: [Join the Hive](https://discord.com/invite/curMHRAN8y)
 - **Security**: For vulnerability reporting, see [SECURITY.md](./SECURITY.md).
+- **Standards**: Development follows the [Apache 2.0 License](./LICENSE).
 
----
-
-## 📄 License
-
-This project is licensed under the **Apache License 2.0**. See the [LICENSE](./LICENSE) file for details.
-
-*Built with ❤️ by the DreamBees AI Team.*
+*Developed with ❤️ for the future of AI-assisted creativity.*

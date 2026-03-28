@@ -43,7 +43,7 @@ COPY --from=builder /app ./
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Set the primary command
-CMD ["node", "index.js"]
+CMD ["node", "-e", "console.log('--- TEST LOG ---'); process.exit(0)"]
 
 # Security: Use a non-root user
 USER node

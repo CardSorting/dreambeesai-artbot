@@ -1,6 +1,6 @@
 #!/bin/bash
 # 🐝 DreamBees Hive Node: GCE Deployment Script (v1.0)
-set -e
+set -ex
 
 # --- CONFIGURATION ---
 PROJECT_ID="dreambees-alchemist"

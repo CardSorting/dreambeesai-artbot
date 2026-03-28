@@ -1,3 +1,7 @@
+// --- SYSTEM DEFAULTS ---
+process.env.NODE_ENV = process.env.NODE_ENV || 'development';
+process.env.PORT = process.env.PORT || '8080';
+
 console.log('--- SYSTEM BOOT ---');
 console.log('Environment:', { NODE_ENV: process.env.NODE_ENV, PORT: process.env.PORT });
 
@@ -458,6 +462,13 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             res.writeHead(404);
             res.end();
         }
+    }).on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            logger.error(`Port ${port} is already in use. Please kill the existing process and restart.`);
+            process.exit(1);
+        } else {
+            logger.error('HTTP Server Error', err);
+        }
     }).listen(port, () => {
         logger.info(`Dependency-aware health probe & Task Webhook listening on port ${port}`);
     });
@@ -525,6 +536,9 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     client.login(process.env.DISCORD_TOKEN).then(() => {
         clearTimeout(loginTimeout);
         logger.info('Discord login successful.');
+        logger.info('----------------------------------------');
+        logger.info('   🐝 SYSTEM ONLINE & MISSION READY   ');
+        logger.info('----------------------------------------');
     }).catch(err => {
         clearTimeout(loginTimeout);
         logger.error('Discord login failed immediately.', err);

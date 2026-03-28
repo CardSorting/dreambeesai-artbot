@@ -134,27 +134,30 @@ const client = new Client({
     // --- EXTREME HARDENING: Memory & Cache Management ---
     // Specifically designed to flatten the memory growth curve over long uptime sessions.
     makeCache: (manager) => {
-        if (manager.name === 'MessageManager') return new Collection({ maxSize: 100 }); // Minimal message cache (only for interactions)
-        if (manager.name === 'GuildMemberManager') return new Collection({ maxSize: 50 }); // Minimal member cache
+        if (manager.name === 'MessageManager') return new Collection({ maxSize: 100 });
+        if (manager.name === 'GuildMemberManager') return new Collection({ maxSize: 50 });
         return new Collection();
     },
     sweepers: {
-        messages: {
-            interval: 3600, // Every hour
-            lifetime: 1800, // Prune messages older than 30m
-        },
-        threads: {
-            interval: 3600,
-            lifetime: 3600, // Prune inactive threads after 1h
-        },
-        reactions: {
-            interval: 3600,
-            filter: () => true, // Prune all reactions from cache regularly
-        }
+        messages: { interval: 3600, lifetime: 1800 },
+        threads: { interval: 3600, lifetime: 3600 },
+        reactions: { interval: 3600, filter: () => true }
     }
 });
 
-const activeJobs = new Map(); // interactionId -> AbortController
+// --- INDUSTRIAL HARDENING: Resource Monitoring ---
+process.on('warning', (warning) => {
+    if (warning.name === 'MemoryPressureWarning' || warning.message.includes('memory')) {
+        logger.warn('SENTINEL: Significant Memory Pressure detected by Node runtime!', {
+            name: warning.name,
+            message: warning.message,
+            stack: warning.stack,
+            rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB'
+        });
+    }
+});
+
+const activeJobs = new Map();
 const lastInteractions = []; // Tracking the last 5 IDs for forensic analysis
 
 client.commands = new Collection();
@@ -630,36 +633,56 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         process.exit(1);
     });
 
-    // Graceful Shutdown
+    // Graceful Shutdown (v2 - Mission Critical Termination)
     const shutdown = async (signal) => {
-        logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 60s)...`);
+        logger.info(`🚨 ${signal} Received. Initiating Industrial-Grade Draining...`, { 
+            activeJobs: activeJobs.size,
+            uptime: Math.round(process.uptime()) + 's' 
+        });
 
-        // Trigger AbortControllers for all active jobs
+        // 1. Immediately stop accepting new health probes/webhooks
+        server.close(() => {
+            logger.info('Sentinel: Health probe server closed to new traffic.');
+        });
+
+        // 2. Set presence to "Relocating"
+        if (client.user) {
+            client.user.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });
+        }
+
+        // 3. Trigger AbortControllers for all active jobs (letting them handle their own cleanups)
         for (const [id, job] of activeJobs.entries()) {
             if (job.controller) {
-                logger.info(`Aborting task ${id} due to shutdown.`);
+                logger.info(`Sentinel: Aborting task ${id} for graceful draining.`);
                 job.controller.abort();
             }
         }
 
-        // Stop taking new interactions
-        client.user?.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });
-
+        // 4. Wait for drainage
         let waitAttempts = 0;
-        while (activeJobs.size > 0 && waitAttempts < 60) {
+        const maxWait = 55; // GCE usually gives 60s
+        while (activeJobs.size > 0 && waitAttempts < maxWait) {
             await new Promise(r => setTimeout(r, 1000));
             waitAttempts++;
-            if (waitAttempts % 10 === 0) logger.info(`Still waiting for ${activeJobs.size} jobs to drain...`);
+            if (waitAttempts % 10 === 0) logger.warn(`Draining... ${activeJobs.size} jobs remaining. Wait: ${waitAttempts}s`);
         }
 
+        // 5. Final Closures
         if (activeJobs.size > 0) {
-            logger.warn(`Shutdown forced while ${activeJobs.size} jobs were still active.`);
+            logger.error(`Sentinel: Forced shutdown with ${activeJobs.size} orphaned jobs.`);
         } else {
-            logger.info(`All jobs drained. Goodbye!`);
+            logger.info('Sentinel: All generations drained successfully.');
         }
 
-        server.close();
-        client.destroy();
+        try {
+            await admin.app().delete(); // Close Firebase Admin connections
+            logger.info('Sentinel: Firebase connections closed.');
+            client.destroy();
+            logger.info('Sentinel: Discord gateway closed. Goodbye.');
+        } catch (e) {
+            logger.error('Sentinel: Error during final disposal', e);
+        }
+        
         process.exit(0);
     };
 

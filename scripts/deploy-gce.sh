@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🐝 DreamBees Hive Node: GCE Deployment Script (v1.3)
+# 🐝 DreamBees Hive Node: GCE Deployment Script (v1.5 - Industrial Hardened)
 set -e
 
 # --- FLAGS ---
@@ -54,7 +54,7 @@ if [ "$SKIP_LINT" = false ]; then
     fi
 fi
 
-echo "🚀 Starting ALWAYS-ON Deployment for ${INSTANCE_NAME} to ${ZONE}..."
+echo "🚀 Starting INDUSTRIAL-GRADE Deployment for ${INSTANCE_NAME} to ${ZONE}..."
 
 # 1. Project Alignment
 echo "🛰️ Aligning project to ${PROJECT_ID}..."
@@ -76,8 +76,14 @@ gcloud services enable \
     artifactregistry.googleapis.com \
     cloudbuild.googleapis.com
 
-# 4. Artifact Registry Management
-echo "📦 Optimizing Artifact Registry..."
+# 4. Artifact Registry Clean-up (Extreme Hardening)
+echo "📦 Pruning obsolete container images..."
+# Keeps only the last 3 tags to save costs and avoid confusion
+gcloud artifacts docker images list ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME} \
+    --sort-by="~CREATE_TIME" --format="get(digest)" --limit=999 | tail -n +4 | \
+    xargs -I {} gcloud artifacts docker images delete ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}@{} --quiet || true
+
+# 5. Artifact Registry Management
 if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>/dev/null; then
     echo "Creating repository ${REPO_NAME}..."
     gcloud artifacts repositories create ${REPO_NAME} \
@@ -86,23 +92,25 @@ if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>
         --description="Docker repository for DreamBees Discord Bot"
 fi
 
-# 5. High-Performance Build via Cloud Build
-echo "🏗️ Building container image via Cloud Build..."
+# 6. High-Performance Build via Cloud Build
+echo "🏗️ Building hardened container image via Cloud Build..."
 gcloud builds submit --tag ${IMAGE_NAME} .
 
-# 6. GCE Deployment (Create or Update)
+# 7. GCE Deployment (Industrial Hardened with Read-Only Root FS support)
 echo "🚢 Deploying to Compute Engine (${MACHINE_TYPE} @ ${ZONE})..."
 
 # Check if instance already exists
 if gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} &>/dev/null; then
-    echo "🔄 Instance exists. Updating container image..."
+    echo "🔄 Instance exists. Updating to Industrial-Grade container..."
     gcloud compute instances update-container ${INSTANCE_NAME} \
         --zone=${ZONE} \
         --container-image=${IMAGE_NAME} \
         --remove-container-env=NODE_ENV,FIREBASE_SERVICE_ACCOUNT_JSON \
-        --container-env=${ENV_VARS}
+        --container-env=${ENV_VARS} \
+        --container-mount-tmpfs=mount-path=/tmp \
+        --container-privileged=false
 else
-    echo "🆕 Creating new 'Always-On' instance..."
+    echo "🆕 Creating new 'Industrial-Grade' instance..."
     gcloud compute instances create-with-container ${INSTANCE_NAME} \
         --zone=${ZONE} \
         --machine-type=${MACHINE_TYPE} \
@@ -111,8 +119,10 @@ else
         --container-image=${IMAGE_NAME} \
         --container-restart-policy=always \
         --tags=http-server,https-server \
-        --labels=managed-by=antigravity,env=production,app=dreambees \
-        --container-env=${ENV_VARS}
+        --labels=managed-by=antigravity,env=production,app=dreambees,hardened=v1-5 \
+        --container-env=${ENV_VARS} \
+        --container-mount-tmpfs=mount-path=/tmp \
+        --container-privileged=false
 fi
 
 # --- ACTIVE VERIFICATION (SMOKE TEST) ---
@@ -154,6 +164,6 @@ else
     fi
 fi
 
-echo "✅ HIVE NODE DEPLOYED: The DreamBees Discord Bot is now 'Always-On'!"
+echo "✅ HIVE NODE DEPLOYED: The DreamBees Discord Bot is now 'Always-On' and 'Industrial-Hardened'!"
 echo "📡 Diagnostics: gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE}"
 echo "📝 Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22gce_instance%22%0Aresource.labels.instance_id%3D%22${INSTANCE_NAME}%22?project=${PROJECT_ID}"

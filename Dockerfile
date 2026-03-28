@@ -1,7 +1,7 @@
-# --- STAGE 1: Dependency & Native Builder ---
+# --- STAGE 1: Industrial Builder ---
 FROM node:20-bookworm-slim AS builder
 
-# Combine apt install and cleanup to reduce layer size
+# Install minimum build tools for native binaries (Sharp)
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
@@ -10,43 +10,45 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# [LAYER CACHING] Copy only package files first
+# [LAYER CACHING] Dependency isolation
 COPY package*.json ./
-
-# Install ALL dependencies (including dev for building)
 RUN npm ci
 
-# Copy the rest of the application
+# Copy source and prune
 COPY . .
-
-# [OPTIMIZATION] Prune devDependencies before copying to production stage
 RUN npm prune --production
 
-# --- STAGE 2: High-Performance Production Runtime ---
+# --- STAGE 2: Hardened Production Runtime ---
+# We use the same slim base for glibc compatibility with Sharp
 FROM node:20-bookworm-slim
 
-# Install tini (Signal handling) and cleanup in one step
+# Install tini for signal handling (SIGTERM)
 RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Set production environment
+# [SECURITY] Set strictly production environment
 ENV NODE_ENV=production
+# [HARDENING] Point Sharp to /tmp for any overflow (ensures compat with Read-Only Root FS)
+ENV SHARP_CACHE_DIR=/tmp/.sharp-cache
 
-# [SPEED] Copy the pre-built, pruned node_modules from builder
-# This skips running npm in the production stage entirely
+# [ISOLATION] Copy only the essential runtime artifacts
+# We DO NOT copy npm or the builder's cache into the final stage
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app ./
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/index.js ./
+COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/commands ./commands
+COPY --from=builder /app/interactions ./interactions
 
-# Use Tini as the entrypoint to handle signal forwarding (PID 1)
-ENTRYPOINT ["/usr/bin/tini", "--"]
-
-# Set the primary command
-CMD ["node", "index.js"]
-
-# Security: Use non-root user
+# [SECURITY] Switch to non-privileged user immediately
 USER node
 
-# Health check port
+# [ENTRYPOINT] Use tini as PID 1 to ensure signals reach Node
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# [RUNTIME] Start the bot with performance-tuned GC settings
+# This ensures the bot stays within GCE e2-small memory limits (2GB)
+CMD ["node", "--max-old-space-size=1536", "index.js"]
+
 EXPOSE 8080

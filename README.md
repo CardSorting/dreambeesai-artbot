@@ -151,8 +151,18 @@ The streak state $\tau$ at interval $n+1$ is modeled as a discrete state transit
 $$ \Theta = \{ (t_n, t_{n+1}) \mid \Delta t \in [24\text{h}, 48\text{h}] \} $$
 
 **Transition Function ($F$):**
-The system's state machine mapping $F(s_n, t_{n+1})$ defines the behavioral outcomes for each interaction:
-$$ F(s_n, t_{n+1}) = \begin{cases} \text{Continuous}(\tau_n + 1) & \text{if } \Delta t \in \Theta \\ \text{Reset}(1) & \text{if } \Delta t > 48\text{h} \\ \text{Blocked} & \text{if } \Delta t < 24\text{h} \end{cases} $$
+The system's state machine mapping $F(s_{n}, t_{n+1})$ defines the behavioral outcomes for each interaction:
+$$
+F(s_{n}, t_{n+1}) = \left\{
+\begin{array}{ll}
+\text{Continuous}(\tau_{n} + 1) & \text{if } \Delta t \in \Theta \\
+\text{Reset}(1) & \text{if } \Delta t > 48\text{h} \\
+\text{Blocked} & \text{if } \Delta t < 24\text{h}
+\end{array}
+\right.
+$$
+
+---
 
 - **Grace Period (Incentive Physics)**: The **48-hour upper bound** is a deliberate "Grace Period" designed as a psychological buffer for user retention. It provides flexibility for real-world user availability while maintaining the 24-hour periodic engagement target.
 - **Monotonicity & Architectural Integrity**: To ensure state integrity, $\Delta t$ is calculated using the **Firestore `serverTimestamp()`**. This provides a monotonic, server-side source of truth that is immune to local machine clock manipulation and timezone exploits.

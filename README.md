@@ -127,19 +127,53 @@ A multi-layered safety framework that performs:
 
 ---
 
+---
+
 ## ⚡ Mathematical Foundations (Zap Economy)
 
-DreamBees implements a deterministic resource management system where user interactions are governed by formal distribution and consumption functions.
+DreamBees implements a deterministic resource management system where user interactions are governed by formal distribution and consumption functions, ensuring long-term economic stability and incentive alignment.
 
-### Resource Distribution (Daily Claims)
-The reward function $R(\tau)$ for a user with streak $\tau$ is defined as:
+### 1. Resource Distribution (Daily Claims)
+The reward function $R(\tau)$ for a user with streak $\tau$ is defined as follows:
+
 $$ R(\tau) = B + \min((\tau - 1) \cdot \beta, M) $$
-Where $B$ is the base reward, $\beta$ is the streak bonus, and $M$ is the maximum cap.
 
-### Resource Consumption (Inference Costs)
-The batch cost function $C(\mu, n)$ for model $\mu$ and batch size $n$ is:
+| Variable | Definition | Production Value |
+| :--- | :--- | :--- |
+| $B$ | **Base Reward**: The initial Zaps granted per claim. | 100 ⚡ |
+| $\beta$ | **Streak Bonus**: Incremental reward per contiguous day. | 10 ⚡ |
+| $M$ | **Maximum Cap**: The upper boundary for cumulative bonuses. | 100 ⚡ |
+| $\tau$ | **Streak Interval**: The number of contiguous successful claims. | $1, n \dots$ |
+
+#### 🕒 Temporal Constraint (The 48h Window)
+A streak $\tau$ is maintained if the interval $T$ between claim $n$ and $n+1$ satisfies:
+$$ T \le 48 \text{ hours} $$
+Failure to claim within this window triggers a state reset to $\tau = 1$.
+
+---
+
+### 2. Resource Consumption (Inference Costs)
+The batch cost function $C(\mu, n)$ for model $\mu$ and request size $n$ is:
+
 $$ C(\mu, n) = \lceil n \cdot \kappa_\mu + \gamma \rceil $$
-Where $\kappa_\mu$ is the per-image model cost and $\gamma$ is the system orchestration overhead.
+
+| Variable | Definition | Reference |
+| :--- | :--- | :--- |
+| $\kappa_\mu$ | **Model Efficiency**: Base Zap cost per individual image. | Model Registry |
+| $\gamma$ | **Orchestration Tax**: System overhead and processing fee. | $\gamma \ge 0$ |
+| $n$ | **Request Batch**: Number of concurrent generations (e.g., x4). | User Input |
+
+---
+
+### 3. Practical Illustrations
+
+| Scenario | Calculation | Total Cost / Reward |
+| :--- | :--- | :--- |
+| **New User Claim** | $100 + \min(0 \cdot 10, 100)$ | **100 ⚡** |
+| **Day 5 Streak Claim** | $100 + \min(4 \cdot 10, 100)$ | **140 ⚡** |
+| **Day 15 Streak Claim** | $100 + \min(14 \cdot 10, 100)$ | **200 ⚡ (Cap)** |
+| **Standard "Dream" HQ Batch (x4)** | $\lceil 4 \cdot 1.0 + 0 \rceil$ | **4 ⚡** |
+| **Rapid "Flash" Batch (x4)** | $\lceil 4 \cdot 0.5 + 0 \rceil$ | **2 ⚡** |
 
 ---
 

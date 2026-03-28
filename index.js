@@ -6,9 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
 import * as Hive from './lib/hive.js';
-import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db } from './lib/db.js';
+import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db, getOrCreateDiscordUser } from './lib/db.js';
 import { isCircuitOpen } from './lib/api/dreambees.js';
-import { ThreadedInteraction } from './lib/discord-ux.js';
+import { HiveInteraction } from './lib/discord-ux.js';
 
 // --- CONFIGURATION ---
 import { validateConfig, CONFIG } from './lib/config-check.js';
@@ -113,44 +113,57 @@ export async function handleInteraction(interaction, client, activeJobs) {
 
             activeJobs.add(interaction.id);
             
-            // UNIFORM HIVE PROXY
-            let hiveInteraction = null;
+            // 1. Initialize the Hive Proxy immediately
+            const hiveInteraction = new HiveInteraction(interaction);
 
+            // 2. THREADED REDIRECT (Seamless Art Studio)
             if (command.category === 'image' && !interaction.channel.isThread()) {
+                // To prevent Discord 3s timeout, we must acknowledge the interaction IMMEDIATELY
+                await hiveInteraction.deferReply({ ephemeral: true }).catch(err => ctxLogger.error("Initial Defer Failed", err));
+
                 const permissions = interaction.appPermissions;
                 if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
-                    return await interaction.reply({ 
+                    return await interaction.editReply({ 
                         content: '❌ **Permissions Error:** I need permission to create threads to work seamlessly!', 
-                        ephemeral: true 
                     });
                 }
 
                 try {
-                    const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
+                    // Optimized Fetch: Check Firestore first, then target fetch
                     let thread = null;
-                    if (storedThreadId) thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
-
-                    if (!thread) {
-                        const allThreads = await interaction.channel.threads.fetch();
-                        thread = allThreads.threads.find(t => t.ownerId === interaction.client.user.id && t.name.includes(`${interaction.user.username}'s Art Studio`));
+                    const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
+                    
+                    if (storedThreadId) {
+                        thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
                     }
 
                     if (!thread) {
-                        thread = await interaction.channel.threads.create({ name: `🎨 ${interaction.user.username}'s Art Studio`, autoArchiveDuration: 60 });
+                        // Use fetchActive instead of a full fetch to be faster
+                        const activeThreads = await interaction.channel.threads.fetchActive().catch(() => ({ threads: new Map() }));
+                        thread = activeThreads.threads.find(t => t.ownerId === interaction.client.user.id && t.name.includes(`${interaction.user.username}'s Art Studio`));
+                    }
+
+                    if (!thread) {
+                        thread = await interaction.channel.threads.create({ 
+                            name: `🎨 ${interaction.user.username}'s Art Studio`, 
+                            autoArchiveDuration: 60,
+                            reason: 'DreamBees Personal Art Studio'
+                        });
                         await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
                         await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
                     } else if (thread.archived) {
                         await thread.setArchived(false);
                     }
 
-                    hiveInteraction = new HiveInteraction(interaction, thread);
-                    await interaction.reply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}`, ephemeral: true });
+                    // Attach the thread to our interaction proxy
+                    hiveInteraction.thread = thread;
+                    
+                    // Acknowledge the original slash command with the invitation link
+                    await interaction.editReply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}` });
                 } catch (e) {
-                    ctxLogger.error("Failed to create seamless thread", e);
-                    hiveInteraction = new HiveInteraction(interaction); // Fallback to regular but proxied
+                    ctxLogger.error("Failed to provision seamless thread", e);
+                    // Fallback will use the ephemeral response we already acknowledged
                 }
-            } else {
-                hiveInteraction = new HiveInteraction(interaction);
             }
 
             return await command.execute(hiveInteraction, { logger: ctxLogger });

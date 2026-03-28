@@ -1,6 +1,15 @@
 #!/bin/bash
-# 🐝 DreamBees Hive Node: GCE Deployment Script (v1.0)
-set -ex
+# 🐝 DreamBees Hive Node: GCE Deployment Script (v1.3)
+set -e
+
+# --- FLAGS ---
+SKIP_LINT=false
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --skip-lint) SKIP_LINT=true ;;
+    esac
+    shift
+done
 
 # --- CONFIGURATION ---
 PROJECT_ID="dreambees-alchemist"
@@ -33,8 +42,16 @@ ENV_VARS="NODE_ENV=production,DREAMBEES_API_URL=${DREAMBEES_API_URL},DREAMBEES_A
 # --- PRE-DEPLOYMENT VALIDATION ---
 echo "🧐 Verifying local configuration before build..."
 if ! npm run verify; then
-    echo "❌ Error: Pre-deployment verification failed. Fix your .env or configuration before pushing to production."
+    echo "❌ Error: Configuration verification failed. Fix your .env or configuration before pushing to production."
     exit 1
+fi
+
+if [ "$SKIP_LINT" = false ]; then
+    echo "🧹 Running lint check..."
+    if ! npm run lint; then
+        echo "❌ Error: Linting failed. Fix your code style or use --skip-lint to bypass (hotfixes only)."
+        exit 1
+    fi
 fi
 
 echo "🚀 Starting ALWAYS-ON Deployment for ${INSTANCE_NAME} to ${ZONE}..."
@@ -43,14 +60,23 @@ echo "🚀 Starting ALWAYS-ON Deployment for ${INSTANCE_NAME} to ${ZONE}..."
 echo "🛰️ Aligning project to ${PROJECT_ID}..."
 gcloud config set project ${PROJECT_ID}
 
-# 2. API Enablement
+# 2. Firewall Automation (Active Verification)
+echo "🛡️ Ensuring Hive firewall is open on Port 8080..."
+if ! gcloud compute firewall-rules describe allow-hive-8080 &>/dev/null; then
+    gcloud compute firewall-rules create allow-hive-8080 \
+        --allow=tcp:8080 \
+        --target-tags=http-server \
+        --description="Allow Hive Node health checks and Cloud Task webhooks"
+fi
+
+# 3. API Enablement
 echo "📡 Verifying Google Cloud APIs..."
 gcloud services enable \
     compute.googleapis.com \
     artifactregistry.googleapis.com \
     cloudbuild.googleapis.com
 
-# 3. Artifact Registry Management
+# 4. Artifact Registry Management
 echo "📦 Optimizing Artifact Registry..."
 if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>/dev/null; then
     echo "Creating repository ${REPO_NAME}..."
@@ -60,18 +86,16 @@ if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>
         --description="Docker repository for DreamBees Discord Bot"
 fi
 
-# 4. High-Performance Build via Cloud Build
+# 5. High-Performance Build via Cloud Build
 echo "🏗️ Building container image via Cloud Build..."
 gcloud builds submit --tag ${IMAGE_NAME} .
 
-# 5. GCE Deployment (Create or Update)
+# 6. GCE Deployment (Create or Update)
 echo "🚢 Deploying to Compute Engine (${MACHINE_TYPE} @ ${ZONE})..."
 
 # Check if instance already exists
 if gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} &>/dev/null; then
     echo "🔄 Instance exists. Updating container image..."
-    # Simplified deployment by removing the potentially shell-breaking JSON blob
-    # lib/firebase.js will fall back to using API key if SA JSON is missing
     gcloud compute instances update-container ${INSTANCE_NAME} \
         --zone=${ZONE} \
         --container-image=${IMAGE_NAME} \
@@ -89,6 +113,45 @@ else
         --tags=http-server,https-server \
         --labels=managed-by=antigravity,env=production,app=dreambees \
         --container-env=${ENV_VARS}
+fi
+
+# --- ACTIVE VERIFICATION (SMOKE TEST) ---
+echo "🩺 Verifying deployment success..."
+EXTERNAL_IP=$(gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+
+if [ -z "$EXTERNAL_IP" ]; then
+    echo "⚠️ Warning: Failed to fetch external IP. Skipping smoke test."
+else
+    echo "🔗 Instance IP: ${EXTERNAL_IP}. Waiting for container startup (30s)..."
+    sleep 30
+
+    ATTEMPTS=0
+    MAX_ATTEMPTS=3
+    HEALTH_CHECK_URL="http://${EXTERNAL_IP}:8080/healthz"
+
+    while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+        echo "📡 Pinging Health Probe: ${HEALTH_CHECK_URL} (Attempt $((ATTEMPTS+1))/$MAX_ATTEMPTS)..."
+        HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_CHECK_URL" || echo "000")
+        
+        if [ "$HTTP_RESPONSE" == "200" ]; then
+            echo "✅ SMOKE TEST PASSED: Hive Node reports UP and Mission-Ready!"
+            break
+        else
+            echo "⏳ Still initializing (Status: $HTTP_RESPONSE)..."
+            ATTEMPTS=$((ATTEMPTS+1))
+            [ $ATTEMPTS -lt $MAX_ATTEMPTS ] && sleep 15
+        fi
+    done
+
+    if [ "$HTTP_RESPONSE" != "200" ]; then
+        echo "❌ SMOKE TEST FAILED: Hive Node did not report UP in time."
+        echo "🧐 Initiating Failure Forensics..."
+        echo "--------------------------------------------------------"
+        gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE} --start=0 | tail -n 50
+        echo "--------------------------------------------------------"
+        echo "⚠️ Check the logs above for runtime errors or missing configuration."
+        exit 1
+    fi
 fi
 
 echo "✅ HIVE NODE DEPLOYED: The DreamBees Discord Bot is now 'Always-On'!"

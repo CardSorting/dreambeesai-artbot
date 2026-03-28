@@ -35,7 +35,7 @@ export async function execute(interaction, options = {}) {
     const imageIndex = parseInt(parts[3], 10);
     const vibeId = parts[4]; 
 
-    const ctx = { logger: ctxLogger, signal: interaction.signal };
+    const ctx = { logger: ctxLogger, signal: interaction.signal || (interaction.interaction?.signal) };
 
     if (action === 'upscale' && interaction.isButton()) {
         await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'all', ctx);
@@ -600,12 +600,12 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
 
     try {
         const vibes = Object.keys(VIBE_INSTRUCTIONS);
-        const results = await Promise.all(vibes.map(v => generateRemix(generationData, imageIndex, VIBE_INSTRUCTIONS[v], userProfile.uid, interaction)));
+        const results = await Promise.all(vibes.map(v => generateRemix(generationData, imageIndex, VIBE_INSTRUCTIONS[v], userProfile.uid, interaction, { ...ctx })));
 
         await interaction.editReply({ content: '🪄 **Stitching Astral Planes...**' });
 
         const buffers = results.map(r => r.buffer);
-        const gridBuffer = await stitchImages(buffers);
+        const gridBuffer = await stitchImages(buffers, { ...ctx });
         
         const gridFilename = `remix-grids/${interaction.id}.webp`;
         const gridUrl = `https://${process.env.B2_BUCKET}.${process.env.B2_ENDPOINT}/${gridFilename}`;

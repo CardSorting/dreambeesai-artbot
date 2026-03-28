@@ -112,15 +112,15 @@ export async function handleInteraction(interaction, client, activeJobs) {
             if (!command) return;
 
             activeJobs.add(interaction.id);
-            
-            // 1. Initialize the Hive Proxy immediately
             const hiveInteraction = new HiveInteraction(interaction);
+
+            // 1. GLOBAL 3-SECOND SHIELD
+            // Acknowledge ALL slash commands immediately to prevent "Application did not respond" errors.
+            // This ensures safety even if database or network calls (like thread creation) are slow.
+            await hiveInteraction.deferReply({ ephemeral: true }).catch(err => ctxLogger.error("Global Defer Failed", err));
 
             // 2. THREADED REDIRECT (Seamless Art Studio)
             if (command.category === 'image' && !interaction.channel.isThread()) {
-                // To prevent Discord 3s timeout, we must acknowledge the interaction IMMEDIATELY
-                await hiveInteraction.deferReply({ ephemeral: true }).catch(err => ctxLogger.error("Initial Defer Failed", err));
-
                 const permissions = interaction.appPermissions;
                 if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
                     return await interaction.editReply({ 

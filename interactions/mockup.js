@@ -172,13 +172,15 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
         return interaction.editReply({ content: Hive.Voice.emptyJar(MOCKUP_COST, 0), components: [] });
     }
 
+    const signal = interaction.signal || (interaction.interaction?.signal);
+
     await interaction.editReply({ 
         content: `✨ **Hive Worker at work...** Refining **${product.label}** with **${env.label}** nectar via Vertex AI.`,
         embeds: [], components: [] 
     });
 
     try {
-        const imageRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent }, 15000);
+        const imageRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent, signal }, 15000);
         const buffer = Buffer.from(await imageRes.arrayBuffer());
         const base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
 
@@ -256,7 +258,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
     });
 
     try {
-        const sourceRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent }, 15000);
+        const sourceRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent, signal: interaction.signal }, 15000);
         const sourceBuffer = Buffer.from(await sourceRes.arrayBuffer());
         const base64Image = `data:image/png;base64,${sourceBuffer.toString('base64')}`;
 
@@ -275,7 +277,8 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                     requestId: `grid_${interaction.id}`
                 }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal: interaction.signal
         }, 80000);
 
         const { result } = await apiResponse.json();
@@ -371,7 +374,8 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
                     requestId: `gacha_${interaction.id}`
                 }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal: interaction.signal
         }, 60000);
 
         const { result } = await apiResponse.json();

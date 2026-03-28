@@ -18,6 +18,7 @@ export async function execute(interaction) {
 
     const originalInteractionId = parts[1];
     const imageIndex = parseInt(parts[2], 10);
+    const signal = interaction.signal || (interaction.interaction?.signal);
 
     // Initial defer - must be ephemeral if we want subsequent edits to be ephemeral
     await interaction.deferReply({ ephemeral: true });
@@ -39,7 +40,7 @@ export async function execute(interaction) {
         let retries = 3;
         while (retries > 0) {
             try {
-                imageRes = await fetchWithTimeout(imageUrl, { agent: keepAliveAgent }, 20000);
+                imageRes = await fetchWithTimeout(imageUrl, { agent: keepAliveAgent, signal }, 20000);
                 if (imageRes.ok) break;
             } catch (fetchErr) {
                 logger.warn(`Fetch attempt failed for upscale image`, { attempt: 4 - retries, error: fetchErr.message });

@@ -17,6 +17,12 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from './lib/logger.js';
+import * as Hive from './lib/hive.js';
+import { db, verifyConnectivity, admin, COLLECTIONS } from './lib/firebase.js';
+import { cleanupStaleLocks } from './lib/db/locks.js';
+import { recoverZombieTransactions } from './lib/db/recovery.js';
+import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
 import { getOrCreateDiscordUser } from './lib/db/users.js';
 import { toSafeNumber } from './lib/utils.js';
 

@@ -112,14 +112,14 @@ pm2 start index.js --name "dreambees-bot"
 
 Explore deep technical documentation for the DreamBees ecosystem:
 
-- **[🏛️ Architecture Overview](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/architecture.md)**: Service design and generation sequence diagrams.
-- **[🛡️ Safety & Moderation](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/safety.md)**: Deep dive into the Queen's Guard and Hive security.
-- **[⚡ Zap Economy](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/economy.md)**: Transaction lifecycle and financial integrity via Firestore.
-- **[📊 Data Model](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/data-model.md)**: Firestore ERD and storage strategy.
-- **[🧬 Evolution UX & Advanced Interactions](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/ux-interactions.md)**: Guide to surgical edits, lineage murals, and the Prism of Dimensions.
-- **[🚢 Deployment & DevOps](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/deployment.md)**: GCE "Always-On" setup and Dockerization.
-- **[🛠️ Developer Toolkit](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/toolkit.md)**: Guide to administrative and maintenance scripts.
-- **[🩺 Troubleshooting](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/troubleshooting.md)**: Common errors, lock resets, and connectivity diagnostics.
+- **[🏛️ Architecture Overview](./docs/architecture.md)**: Service design and generation sequence diagrams.
+- **[🛡️ Safety & Moderation](./docs/safety.md)**: Deep dive into the Queen's Guard and Hive security.
+- **[⚡ Zap Economy](./docs/economy.md)**: Transaction lifecycle and financial integrity via Firestore.
+- **[📊 Data Model](./docs/data-model.md)**: Firestore ERD and storage strategy.
+- **[🧬 Evolution UX & Advanced Interactions](./docs/ux-interactions.md)**: Guide to surgical edits, lineage murals, and the Prism of Dimensions.
+- **[🚢 Deployment & DevOps](./docs/deployment.md)**: GCE "Always-On" setup and Dockerization.
+- **[🛠️ Developer Toolkit](./docs/toolkit.md)**: Guide to administrative and maintenance scripts.
+- **[🩺 Troubleshooting](./docs/troubleshooting.md)**: Common errors, lock resets, and connectivity diagnostics.
 
 ---
 

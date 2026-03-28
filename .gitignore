@@ -45,3 +45,18 @@ dist/
 build/
 bin/
 obj/
+
+# Deployment & infrastructure
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.override.yml
+.github/
+.gitlab-ci.yml
+terraform/
+k8s/
+helm/
+deploy/
+infra/
+cloudbuild.yaml
+.gcloud/

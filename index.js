@@ -85,6 +85,33 @@ if (fs.existsSync(interactionsPath)) {
     }
 }
 
+import { OAuth2Client } from 'google-auth-library';
+import { processGenerationTask } from './lib/queue/processor.js';
+
+const authClient = new OAuth2Client();
+
+async function verifyOidcToken(req) {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const expectedAudience = process.env.TASK_WEBHOOK_URL || `${process.env.WEBAPP_URL}/tasks/process-generation`;
+        const ticket = await authClient.verifyIdToken({
+            idToken: token,
+            audience: expectedAudience
+        });
+        const payload = ticket.getPayload();
+        
+        // PRODUCTION HARDENING: Strict Issuer and verification checks
+        const isGoogleIssuer = (payload.iss === 'https://accounts.google.com' || payload.iss === 'accounts.google.com');
+        return isGoogleIssuer && payload.email_verified && !!payload.email;
+    } catch (e) {
+        logger.error("OIDC Verification Failed", { error: e.message });
+        return false;
+    }
+}
+
 client.once('ready', async () => {
     logger.info(`Logged in as ${client.user.tag}! Slash commands should be registered via scripts/register-commands.js`);
 
@@ -140,7 +167,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
             const command = client.commands.get(interaction.commandName);
             if (!command) return;
 
-            activeJobs.add(interaction.id);
+            activeJobs.set(interaction.id, null); // Placeholder for local controller
             const hiveInteraction = new HiveInteraction(interaction);
 
             // Category-Aware Deferral Strategy:
@@ -217,7 +244,6 @@ export async function handleInteraction(interaction, client, activeJobs) {
             }
             // Utility/admin commands (claim, status, config) manage their own deferral
 
-            activeJobs.set(interaction.id, null); // Placeholder for local controller
             return await command.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs });
 
         } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
@@ -268,6 +294,68 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     const startTime = Date.now();
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, `http://${req.headers.host}`);
+        
+        // 1. Task Queue Webhook (Google Cloud Tasks)
+        if (req.method === 'POST' && url.pathname === '/tasks/process-generation') {
+            const isAuthorized = await verifyOidcToken(req);
+            if (!isAuthorized && process.env.NODE_ENV === 'production') {
+                res.writeHead(403, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: 'Unauthorized Task Delivery' }));
+            }
+
+            let body = '';
+            let bodySize = 0;
+            const MAX_BODY_SIZE = 1 * 1024 * 1024; // 1MB Hard Limit
+
+            req.on('data', chunk => { 
+                bodySize += chunk.length;
+                if (bodySize > MAX_BODY_SIZE) {
+                    res.writeHead(413, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Payload Too Large' }));
+                    req.destroy();
+                    return;
+                }
+                body += chunk; 
+            });
+
+            req.on('end', async () => {
+                if (res.writableEnded) return;
+                try {
+                    const payload = JSON.parse(body);
+                    const requestId = payload.requestId;
+                    
+                    if (!requestId) throw new Error("Missing requestId in task payload");
+
+                    logger.info(`[CloudTasks] Webhook received task: ${requestId}`);
+
+                    const queueRef = db.collection(COLLECTIONS.GENERATION_QUEUE).doc(requestId);
+                    await queueRef.update({ 
+                        status: 'processing', 
+                        startedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }).catch(() => {});
+
+                    const result = await processGenerationTask(payload, { 
+                        logger: logger.child({ requestId, source: 'CloudTasks' })
+                    });
+
+                    await queueRef.update({
+                        ...result,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ status: 'completed', requestId }));
+                } catch (err) {
+                    logger.error(`[CloudTasks] Webhook processing failed`, { error: err.message });
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: err.message }));
+                }
+            });
+            return;
+        }
+
+        // 2. Health Checks
         if (url.pathname === '/healthz' || url.pathname === '/') {
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
             const isApiHealthy = !isCircuitOpen();
@@ -328,7 +416,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             res.end();
         }
     }).listen(port, () => {
-        logger.info(`Dependency-aware health probe listening on port ${port}`);
+        logger.info(`Dependency-aware health probe & Task Webhook listening on port ${port}`);
     });
 
     // 5. Cleanup Heartbeat (Every 15 Minutes)
@@ -432,4 +520,6 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
+
+
 

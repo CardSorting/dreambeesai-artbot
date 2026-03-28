@@ -14,11 +14,13 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",
+    "@google-cloud/tasks": "^6.2.1",
     "agentkeepalive": "^4.6.0",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
     "firebase": "^12.11.0",
     "firebase-admin": "^13.7.0",
+    "google-auth-library": "^10.6.2",
     "leo-profanity": "^1.9.0",
     "node-fetch": "^3.3.2",
     "p-limit": "^7.3.0",

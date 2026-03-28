@@ -27,7 +27,18 @@ RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# [SECURITY] Set strictly production environment
+# [METADATA] Build-time versioning
+ARG BUILD_VERSION=unknown
+ENV BUILD_VERSION=$BUILD_VERSION
+
+# [LABELS] OCI Standard compliant metadata
+LABEL org.opencontainers.image.source="https://github.com/dreambees/DreamBees-DiscordBot"
+LABEL org.opencontainers.image.revision=$BUILD_VERSION
+LABEL org.opencontainers.image.vendor="DreamBees AI"
+LABEL org.opencontainers.image.title="Hive Node"
+LABEL org.opencontainers.image.description="Professional Distributed Orchestration Engine"
+
+# Set production environment
 ENV NODE_ENV=production
 # [HARDENING] Point Sharp to /tmp for any overflow (ensures compat with Read-Only Root FS)
 ENV SHARP_CACHE_DIR=/tmp/.sharp-cache

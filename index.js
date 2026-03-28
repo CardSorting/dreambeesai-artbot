@@ -559,6 +559,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
                 uptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
                 memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
                 node: process.env.HOSTNAME || 'unknown',
+                version: process.env.BUILD_VERSION || 'unversioned-dev',
                 dependencies: {
                     discord: isClientReady ? 'OK' : 'ERR',
                     db: dbDetails,

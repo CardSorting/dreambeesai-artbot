@@ -92,9 +92,11 @@ if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>
         --description="Docker repository for DreamBees Discord Bot"
 fi
 
-# 6. High-Performance Build via Cloud Build
-echo "🏗️ Building hardened container image via Cloud Build..."
-gcloud builds submit --tag ${IMAGE_NAME} .
+# 6. High-Performance Build via Cloud Build (v2.0)
+echo "🏗️ Building hardened container image via Cloud Build (Accelerated)..."
+GIT_SHA=$(git rev-parse --short HEAD || echo "uncommitted")
+gcloud builds submit --config=cloudbuild.yaml \
+    --substitutions=_IMAGE_NAME=${IMAGE_NAME},_VERSION=${GIT_SHA}
 
 # 7. GCE Deployment (Industrial Hardened with Read-Only Root FS support)
 echo "🚢 Deploying to Compute Engine (${MACHINE_TYPE} @ ${ZONE})..."

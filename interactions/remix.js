@@ -1,3 +1,4 @@
+import { ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { db, getGeneration, getUserByDiscordId, saveGeneration } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
@@ -7,6 +8,8 @@ import { Wallet } from '../lib/wallet.js';
 import * as Hive from '../lib/hive.js';
 import { CONFIG } from '../lib/config-check.js';
 import { wrapInAegis } from '../lib/safety-utils.js';
+
+export const customIdPrefix = 'remix_';
 
 const VIBE_INSTRUCTIONS = {
     cyberpunk: "apply a cyberpunk aesthetic with neon lights, futuristic cityscape elements, and a high-tech atmosphere",
@@ -22,10 +25,10 @@ const PRISM_INSTRUCTIONS = {
     gothic: "project into the Gothic Realm: shattered shadows, Victorian macabre, and obsidian elegance"
 };
 
-const REMIX_COST = CONFIG.COSTS.REMIX;
-const PRISM_COST = CONFIG.COSTS.PRISM;
-const VARIATION_COST = CONFIG.COSTS.VARIATION;
-const MATCH_COST = CONFIG.COSTS.MATCH;
+const REMIX_COST = CONFIG.COSTS.REMIX || 0.50;
+const PRISM_COST = CONFIG.COSTS.PRISM || 1.50;
+const VARIATION_COST = CONFIG.COSTS.VARIATION || 1.50;
+const MATCH_COST = CONFIG.COSTS.MATCH || 0.50;
 
 export async function execute(interaction, options = {}) {
     const { logger: ctxLogger = logger } = options;
@@ -466,8 +469,8 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
 
     // Fetch Style Mimic from user profile
-    const userDoc = await db.collection('users').doc(interaction.user.id).get();
-    const styleMimic = userDoc.data()?.currentStyleMimic;
+    const userDoc = await db.collection('discord_users').doc(interaction.user.id).get();
+    const styleMimic = userDoc.exists ? userDoc.data()?.currentStyleMimic : undefined;
 
     // 1. Safety Guard
     const isSafe = await Hive.guardHive(instructions, { 
@@ -587,7 +590,8 @@ async function getLoreFragment(prompt) {
     }
 }
 
-async function handleEliteVibeGrid(interaction, originalInteractionId, imageIndex) {
+async function handleEliteVibeGrid(interaction, originalInteractionId, imageIndex, ctx = {}) {
+    const { logger: ctxLogger = logger } = ctx;
     await interaction.deferReply({ ephemeral: true });
 
     const generationData = await getGeneration(originalInteractionId);
@@ -600,12 +604,12 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
 
     try {
         const vibes = Object.keys(VIBE_INSTRUCTIONS);
-        const results = await Promise.all(vibes.map(v => generateRemix(generationData, imageIndex, VIBE_INSTRUCTIONS[v], userProfile.uid, interaction, { ...ctx })));
+        const results = await Promise.all(vibes.map(v => generateRemix(generationData, imageIndex, VIBE_INSTRUCTIONS[v], userProfile.uid, interaction, { logger: ctxLogger, ...ctx })));
 
         await interaction.editReply({ content: '🪄 **Stitching Astral Planes...**' });
 
         const buffers = results.map(r => r.buffer);
-        const gridBuffer = await stitchImages(buffers, { ...ctx });
+        const gridBuffer = await stitchImages(buffers, { logger: ctxLogger });
         
         const gridFilename = `remix-grids/${interaction.id}.webp`;
         const gridUrl = `https://${process.env.B2_BUCKET}.${process.env.B2_ENDPOINT}/${gridFilename}`;
@@ -723,6 +727,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
         const settle = (callback, value) => {
             if (isSettled) return;
             isSettled = true;
+            clearTimeout(hardTimeout);
             if (unsubscribe) unsubscribe();
             callback(value);
         };
@@ -730,7 +735,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
         const onAbort = () => settle(reject, new Error("Generation cancelled by user or system shutdown."));
         if (signal) {
             if (signal.aborted) return onAbort();
-            signal.addEventListener('abort', onAbort);
+            signal.addEventListener('abort', onAbort, { once: true });
         }
 
         unsubscribe = queueRef.onSnapshot(async (snapshot) => {
@@ -746,7 +751,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
         });
 
         // Hard Timeout (2 minutes)
-        setTimeout(() => settle(reject, new Error("Generation timed out after 2 minutes of silence.")), 120000);
+        const hardTimeout = setTimeout(() => settle(reject, new Error("Generation timed out after 2 minutes of silence.")), 120000);
     });
 
     // 4. Fetch final image

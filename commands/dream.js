@@ -37,11 +37,11 @@ export async function execute(interaction) {
 
     if (!isSafe) {
         logger.warn(`Unsafe prompt rejected`, { discordId, discordTag, originalPrompt });
-        return interaction.reply({ content: Hive.Voice.safety, ephemeral: true });
+        return interaction.editReply({ content: Hive.Voice.safety });
     }
 
     if (prompt.length < 3) {
-        return interaction.reply({ content: Hive.Voice.shortNectar, ephemeral: true });
+        return interaction.editReply({ content: Hive.Voice.shortNectar });
     }
 
     // 2. Fetch or Create Discord User Profile
@@ -49,13 +49,11 @@ export async function execute(interaction) {
 
     // 3. Pre-flight Balance Check
     if ((userData.zaps || 0) < TOTAL_COST) {
-        return interaction.reply({ 
-            content: Hive.Voice.emptyJar(TOTAL_COST, userData.zaps || 0), 
-            ephemeral: true 
+        return interaction.editReply({ 
+            content: Hive.Voice.emptyJar(TOTAL_COST, userData.zaps || 0)
         });
     }
 
-    // 4. Start Generation
-    await interaction.deferReply();
+    // 4. Start Generation (interaction already deferred by global handler in index.js)
     return performGeneration(interaction, userData.uid, prompt, MODEL_ID);
 }

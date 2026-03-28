@@ -273,6 +273,26 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         }
     }, 15 * 60 * 1000);
 
+    // Process-Level Safety Net: Prevent unhandled errors from killing the process
+    process.on('unhandledRejection', (reason, promise) => {
+        logger.error('UNHANDLED PROMISE REJECTION — Bot safety net caught this', reason instanceof Error ? reason : { reason: String(reason) });
+    });
+
+    process.on('uncaughtException', (error) => {
+        logger.error('UNCAUGHT EXCEPTION — Bot safety net caught this', error);
+        // Give logger time to flush, then exit (systemd/Docker will restart us)
+        setTimeout(() => process.exit(1), 3000);
+    });
+
+    // Discord.js client-level error handlers
+    client.on('error', (error) => {
+        logger.error('Discord.js Client Error', error);
+    });
+
+    client.on('warn', (message) => {
+        logger.warn('Discord.js Client Warning', { message });
+    });
+
     client.login(process.env.DISCORD_TOKEN);
 
     // Graceful Shutdown

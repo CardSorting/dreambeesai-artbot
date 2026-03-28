@@ -1,62 +1,61 @@
-# 🚢 Deployment & DevOps Guide
+# 🚢 Industrial-Grade Deployment & Unified CI/CD (v3.0)
 
-DreamBees is designed to be highly portable and resilient, supporting "Always-On" deployment via containerization.
-
----
-
-## 🏗️ Dockerization
-
-The bot is containerized using a `Dockerfile` based on the official Node.js Alpine image for a minimal footprint.
-
-- **Base Image**: `node:20.18.3-alpine`
-- **Native Dependencies**: Includes `vips-dev`, `fftw-dev`, and `build-base` for high-performance image processing with `sharp`.
-- **Optimization**: Uses a multi-layered build to minimize final image size.
-
-### Building Locally
-```bash
-docker build -t dreambees-bot .
-docker run --env-file .env dreambees-bot
-```
+The DreamBees Hive Node is designed for mission-critical reliability on Google Cloud Platform. It utilizes a state-of-the-art **Build-Scan-Deploy** orchestration pipeline that ensures maximum security, performance, and uptime.
 
 ---
 
-## ☁️ Google Compute Engine (GCE)
+## 🏗️ Docker Engineering: The "Vault" Pattern
 
-For production, the bot is typically deployed as a "Managed Container" instance on GCE using the provided automation script.
+The bot uses a high-efficiency multi-stage `Dockerfile` focused on **Industrial-Grade Isolation**.
+
+- **Base Image**: `node:20-bookworm-slim` (for glibc compatibility with `sharp`).
+- **Immutable OS**: The container runs with a **Read-Only Root Filesystem**. This prevents runtime tampering and ensures the highest possible security posture.
+- **Walled Garden (tmpfs)**: A writable memory space is mounted at `/tmp` for temporary image processing, buffers, and cache.
+- **Minimal Surface Area**: All build tools (`npm`, `make`, `g++`) are stripped from the final production stage.
+- **OOM Resilience**: Node.js is hard-coded with `--max-old-space-size=1536` to ensure deterministic garbage collection within GCE `e2-small` RAM limits.
+
+---
+
+## 🚀 Unified Pipeline (v3.0)
+
+We have centralized the entire deployment lifecycle into a single **Cloud Build Manifest (`cloudbuild.yaml`)**.
+
+### 🏗️ Orchestration Steps:
+1. **Parallel Pre-checks**: Runs `npm run lint` and `npm run verify` concurrently in the cloud to catch errors before building.
+2. **Accelerated Build**: Uses the **Kaniko Executor** for 10x better layer caching for multi-stage Dockerfiles.
+3. **Security Gating**: Automatically performs an **On-Demand Vulnerability Scan** of every new image.
+4. **Security Checkpoint**: Automatically **fails the build** if High or Critical severity vulnerabilities are detected.
+5. **Registry Pruning**: Automatically deletes obsolete images, keeping only the most recent 3 versions to manage costs.
+6. **Atomic Deployment**: Updates the GCE instance container with the new image, `tmpfs` mounts, and non-privileged security context.
+
+---
+
+## 🛰️ Infrastructure & DevOps
 
 ### 📜 `deploy-gce.sh`
-This script orchestrates the entire deployment lifecycle:
-1. **API Enablement**: Ensures Compute Engine and Artifact Registry APIs are active.
-2. **Cloud Build**: Offloads the image build process to Google Cloud Build for speed and reliability.
-3. **Artifact Registry**: Pushes the resulting image to a private repository.
-4. **Instance Provisioning**: Creates or updates a GCE instance with the following specifications:
-   - **Machine Type**: `e2-small` (2 vCPU, 2GB RAM).
-   - **Restart Policy**: `always` (the bot automatically restarts if it crashes or the VM reboots).
-   - **Env Injection**: Automatically maps local `.env` variables to the GCE container environment.
-
-### Deployment Command
+This script serves as the high-level trigger for the Unified Pipeline:
 ```bash
 ./scripts/deploy-gce.sh
 ```
+It handles local secret loading (from `.env`), Git version detection, and provides an **Active Smoke Test** that pings the `/healthz` endpoint using the instance's external IP to verify a successful startup.
+
+### 🕵️ Observability & Traceability
+- **Correlation IDs**: All logs include a unified `trace_id` for following a single image generation cycle from start to finish.
+- **Built-in Versioning**: The bot's current Git Commit SHA is baked into the image and visible in the `/healthz` probe.
+- **Failure Forensics**: If a deployment fails, the script automatically pulls the last 50 lines of the VM's serial port output to diagnose the crash immediately.
+
+### 🩺 Health Monitoring
+```bash
+# Verify the bot is Mission-Ready
+curl http://[INSTANCE_IP]:8080/healthz
+```
+Response includes status (UP/DEGRADED), individual dependency health (Discord, DB, APIs), memory usage, and the current build version.
 
 ---
 
-## 🛰️ Infrastructure Requirements
-
-To ensure a successful deployment, the following services must be configured:
-
-- **Firebase Service Account**: Provided via `FIREBASE_SERVICE_ACCOUNT_JSON` or a path to a `.json` file.
-- **Backblaze B2/S3 Credentials**: Required for asset persistence.
-- **Discord Bot Token**: The identity of the bot on the Discord platform.
-- **Modal AI Endpoints**: Access to the GPU inference cluster.
-
----
-
-## 📈 Monitoring & Reliability
-
-- **Health Probes**: The bot exposes a simple health check (if configured) or relies on Docker's internal restart logic.
-- **Logging**: Production logs are sent to the console and can be monitored via GCE Serial Port Output or Cloud Logging:
-  ```bash
-  gcloud compute instances get-serial-port-output dreambees-hive-node --zone=us-central1-a
-  ```
-- **Circuit Breaker**: The `isCircuitOpen()` check in `lib/api/dreambees.js` prevents the bot from flooding failing endpoints during an outage.
+## 📈 Security Hardening Summary
+- [x] Read-Only Root Filesystem
+- [x] Automated Vulnerability Gating
+- [x] Non-Privileged User Execution
+- [x] Automated Secret Masking in Logs
+- [x] Service-Level Circuit Breaking (Partial Degradation)

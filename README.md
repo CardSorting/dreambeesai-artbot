@@ -90,38 +90,35 @@ A multi-layered safety framework that performs:
 
 ---
 
-## 🚀 Deployment & Operations
+## 🚀 Deployment & Operations (Industrial Grade)
 
-### Prerequisites
-- **Runtime**: Node.js `v20.x` (ESM)
-- **State Database**: Google Cloud Firestore
-- **Asset Storage**: Backblaze B2 or S3-compatible storage
-- **Compute Cluster**: Modal CLI & Account credentials
+DreamBees is deployed as a hardened, immutable "Hive Node" on **Google Compute Engine (GCE)** using a professional-grade Unified CI/CD Pipeline.
 
-### Setup Procedure
+### 🛡️ The "Vault" Architecture
+- **Immutable OS**: The container runs with a **Read-Only Root Filesystem** for maximum runtime security.
+- **Unified Pipeline (v3.0)**: A fully automated **Build-Scan-Deploy** manifest (`cloudbuild.yaml`) that handles everything from parallel linting to automated vulnerability gating.
+- **Kaniko Acceleration**: High-performance layer caching cuts build times by up to 10x.
 
-1. **Clone & Initialize**
+### 🏁 Quick Deployment
+1. **Initialize Environment**:
    ```bash
-   git clone https://github.com/DreamBees-AI/DreamBees-DiscordBot.git
-   cd DreamBees-DiscordBot && npm install
+   cp .env.example .env && # Populate with credentials
+   ```
+2. **Trigger Unified Pipeline**:
+   ```bash
+   ./scripts/deploy-gce.sh
    ```
 
-2. **Environment Configuration**
-   ```bash
-   cp .env.example .env
-   # Populate with DISCORD_TOKEN, FIREBASE_CONFIG, B2_ENDPOINT, and MODAL_API_KEY
-   ```
+### 🩺 System Health Monitoring
+The Hive Node exposes a dependency-aware health probe for mission-critical observability:
+```bash
+curl http://[INSTANCE_IP]:8080/healthz
+```
+*Provides real-time status of Discord Gateway, Firestore, Modal Inference, and B2 Storage.*
 
-3. **Orchestration Verification**
-   ```bash
-   npm run verify    # Validates database and storage connectivity
-   npm run register  # Deploys Discord Global Command Schema
-   ```
+---
 
-4. **Production Startup**
-   ```bash
-   pm2 start index.js --name "dreambees-core" --exp-backoff-restart-delay 1000
-   ```
+For a deep dive into the orchestration engineering, see the **[🚢 Deployment Guide](./docs/deployment.md)**.
 
 ---
 

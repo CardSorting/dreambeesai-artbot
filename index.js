@@ -454,6 +454,10 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         logger.info(`Dependency-aware health probe & Task Webhook listening on port ${port}`);
     });
 
+    // HARDENING: Increase server timeout to 5 minutes to accommodate long-running Cloud Task generations
+    server.timeout = 300000;
+    server.keepAliveTimeout = 305000; 
+
     // 5. Cleanup Heartbeat (Every 15 Minutes)
     setInterval(async () => {
         try {

@@ -3,7 +3,13 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 process.env.PORT = process.env.PORT || '8080';
 
 console.log('--- SYSTEM BOOT ---');
-console.log('Environment:', { NODE_ENV: process.env.NODE_ENV, PORT: process.env.PORT });
+console.log('Environment:', { 
+    NODE_ENV: process.env.NODE_ENV, 
+    PORT: process.env.PORT,
+    PID: process.pid,
+    Node: process.version,
+    Platform: process.platform
+});
 
 import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import http from 'http';
@@ -11,13 +17,18 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { logger } from './lib/logger.js';
-import * as Hive from './lib/hive.js';
-import { db, verifyConnectivity } from './lib/firebase.js';
-import { cleanupStaleLocks } from './lib/db/locks.js';
-import { recoverZombieTransactions } from './lib/db/recovery.js';
-import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
 import { getOrCreateDiscordUser } from './lib/db/users.js';
+import { toSafeNumber } from './lib/utils.js';
+
+// --- TELEMETRY BINDING ---
+const systemContext = {
+    pid: process.pid,
+    node: process.version,
+    platform: process.platform,
+    env: process.env.NODE_ENV
+};
+const globalLogger = logger.child(systemContext);
+let isInitialized = false;
 
 console.log('--- STARTING DREAMBEES BOT ---');
 
@@ -56,6 +67,29 @@ function startHeartbeat(activeJobs) {
             logger.warn('HIGH_MEMORY_USAGE_DETECTED', { heapUsedMb });
         }
     }, 15 * 60 * 1000); // Every 15 minutes
+}
+
+/**
+ * Phase 11: Job Registry Hygiene
+ * Prunes the activeJobs Map to prevent memory leaks from hanging interactions.
+ */
+function startSanityMonitor(activeJobs) {
+    globalLogger.info('Starting job sanity monitor (Active Job Pruning)...');
+    setInterval(() => {
+        const now = Date.now();
+        const MAX_JOB_AGE = 10 * 60 * 1000; // 10 Minutes
+        let pruned = 0;
+
+        for (const [id, job] of activeJobs.entries()) {
+            if (job.createdAt && (now - job.createdAt > MAX_JOB_AGE)) {
+                globalLogger.warn(`Pruning stale job: ${id}`, { age: now - job.createdAt });
+                if (job.controller) job.controller.abort();
+                activeJobs.delete(id);
+                pruned++;
+            }
+        }
+        if (pruned > 0) globalLogger.info(`Sanity monitor pruned ${pruned} stale jobs.`);
+    }, 5 * 60 * 1000); // Run every 5 minutes
 }
 
 // --- GLOBAL PROCESS HARDENING ---
@@ -157,6 +191,7 @@ async function verifyOidcToken(req) {
             logger.warn("OIDC Identity Mismatch", { 
                 iss: payload.iss, 
                 email: payload.email, 
+                email_verified: payload.email_verified,
                 expected: process.env.CLOUD_TASKS_SA_EMAIL 
             });
             return false;
@@ -166,6 +201,22 @@ async function verifyOidcToken(req) {
         logger.error("OIDC Verification Failed", { error: e.message });
         return false;
     }
+}
+
+/**
+ * FORTRESS GUARD: Standardized Webhook Payload Validation
+ */
+function validateTaskPayload(payload) {
+    const required = ['requestId', 'prompt', 'modelId', 'userId', 'discordId'];
+    const missing = required.filter(field => !payload[field]);
+    if (missing.length > 0) return { valid: false, error: `Missing required fields: ${missing.join(', ')}` };
+    
+    // Type and Boundary checks
+    if (typeof payload.requestId !== 'string' || payload.requestId.length < 5) return { valid: false, error: 'requestId must be a valid string' };
+    if (typeof payload.prompt !== 'string' || payload.prompt.trim().length < 3) return { valid: false, error: 'prompt too short or invalid' };
+    if (payload.prompt.length > 2000) return { valid: false, error: 'prompt exceeds maximum length (2000 chars)' };
+    
+    return { valid: true };
 }
 
 client.once('ready', async () => {
@@ -215,8 +266,15 @@ export async function handleInteraction(interaction, client, activeJobs) {
     });
 
     try {
-        const photoURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 }) || null;
-        await getOrCreateDiscordUser(interaction.user.id, interaction.user.tag, photoURL)
+        const photoURL = interaction.user ? interaction.user.displayAvatarURL({ extension: 'png', size: 256 }) : null;
+        const userId = interaction.user?.id;
+        const userTag = interaction.user?.tag;
+        const guild = interaction.guild;
+        const member = interaction.member;
+        
+        if (!userId) throw new Error("Interaction missing user profile context");
+
+        await getOrCreateDiscordUser(userId, userTag, photoURL)
             .catch(err => ctxLogger.error("Identity Provisioning Failed", err));
 
         if (interaction.isChatInputCommand()) {
@@ -224,7 +282,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
             if (!command) return;
 
             const controller = new AbortController();
-            activeJobs.set(interaction.id, controller);
+            activeJobs.set(interaction.id, { controller, createdAt: Date.now() });
             const hiveInteraction = new HiveInteraction(interaction);
 
             // Category-Aware Deferral Strategy:
@@ -235,7 +293,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
                 await hiveInteraction.deferReply({ ephemeral: true }).catch(err => ctxLogger.error("Global Defer Failed", err));
 
                 // 2. THREADED REDIRECT (Seamless Art Studio)
-                if (!interaction.channel.isThread()) {
+                if (!interaction.channel || !interaction.channel.isThread()) {
                     const permissions = interaction.appPermissions;
                     if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
                         return await interaction.editReply({
@@ -309,7 +367,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
             if (matchedPrefix) {
                 const handler = client.buttonInteractions.get(matchedPrefix);
                 const controller = new AbortController();
-                activeJobs.set(interaction.id, controller);
+                activeJobs.set(interaction.id, { controller, createdAt: Date.now() });
                 // Standardize lifecycle with proxy
                 const hiveInteraction = new HiveInteraction(interaction);
                 return await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs, signal: controller.signal });
@@ -339,6 +397,10 @@ export async function handleInteraction(interaction, client, activeJobs) {
 }
 
 client.on('interactionCreate', async interaction => {
+    if (!isInitialized) {
+        logger.warn('Discarding interaction: System not yet initialized.');
+        return;
+    }
     await handleInteraction(interaction, client, activeJobs);
 });
 
@@ -352,6 +414,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     }
 
     startHeartbeat(activeJobs);
+    startSanityMonitor(activeJobs);
 
     // Robust HTTP Server for Cloud Run Health Checks
     const port = process.env.PORT || 8080;
@@ -386,10 +449,15 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
                 if (res.writableEnded) return;
                 try {
                     const payload = JSON.parse(body);
-                    const requestId = payload.requestId;
+                    const validation = validateTaskPayload(payload);
                     
-                    if (!requestId) throw new Error("Missing requestId in task payload");
+                    if (!validation.valid) {
+                        logger.warn(`[CloudTasks] Invalid Task Payload`, { error: validation.error, bodyExcerpt: body.substring(0, 100) });
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({ error: validation.error }));
+                    }
 
+                    const requestId = payload.requestId;
                     logger.info(`[CloudTasks] Webhook received task: ${requestId}`);
 
                     const queueRef = db.collection(COLLECTIONS.GENERATION_QUEUE).doc(requestId);
@@ -530,6 +598,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
 
     client.login(process.env.DISCORD_TOKEN).then(() => {
         clearTimeout(loginTimeout);
+        isInitialized = true;
         logger.info('Discord login successful.');
         logger.info('----------------------------------------');
         logger.info('   🐝 SYSTEM ONLINE & MISSION READY   ');
@@ -545,10 +614,10 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 60s)...`);
 
         // Trigger AbortControllers for all active jobs
-        for (const [id, controller] of activeJobs.entries()) {
-            if (controller) {
+        for (const [id, job] of activeJobs.entries()) {
+            if (job.controller) {
                 logger.info(`Aborting task ${id} due to shutdown.`);
-                controller.abort();
+                job.controller.abort();
             }
         }
 

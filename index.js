@@ -1,3 +1,6 @@
+console.log('--- SYSTEM BOOT ---');
+console.log('Environment:', { NODE_ENV: process.env.NODE_ENV, PORT: process.env.PORT });
+
 import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import http from 'http';
 import dotenv from 'dotenv';
@@ -11,6 +14,8 @@ import { cleanupStaleLocks } from './lib/db/locks.js';
 import { recoverZombieTransactions } from './lib/db/recovery.js';
 import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
 import { getOrCreateDiscordUser } from './lib/db/users.js';
+
+console.log('--- STARTING DREAMBEES BOT ---');
 
 import { isCircuitOpen } from './lib/api/dreambees.js';
 import { HiveInteraction } from './lib/discord-ux.js';

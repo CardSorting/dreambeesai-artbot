@@ -258,7 +258,8 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
     });
 
     try {
-        const sourceRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent, signal: interaction.signal }, 15000);
+        const signal = interaction.signal || (interaction.interaction?.signal);
+        const sourceRes = await fetchWithTimeout(generationData.urls[imageIndex], { agent: keepAliveAgent, signal }, 15000);
         const sourceBuffer = Buffer.from(await sourceRes.arrayBuffer());
         const base64Image = `data:image/png;base64,${sourceBuffer.toString('base64')}`;
 
@@ -278,7 +279,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
                 }
             }),
             agent: keepAliveAgent,
-            signal: interaction.signal
+            signal
         }, 80000);
 
         const { result } = await apiResponse.json();
@@ -375,7 +376,7 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
                 }
             }),
             agent: keepAliveAgent,
-            signal: interaction.signal
+            signal: interaction.signal || (interaction.interaction?.signal)
         }, 60000);
 
         const { result } = await apiResponse.json();

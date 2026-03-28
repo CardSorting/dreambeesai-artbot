@@ -41,12 +41,19 @@ export async function execute(interaction) {
             }
 
             try {
+                if (!interaction.message) {
+                    return interaction.reply({ content: '❌ **Message Already Deleted.**', ephemeral: true });
+                }
                 await interaction.message.delete();
                 logger.info(`Message deleted via moderation request`, { 
                     interactionId: originalInteractionId, 
                     actorId: interaction.user.id,
                     isMod
                 });
+                // Acknowledge deletion silently if we haven't replied yet
+                if (!interaction.replied) {
+                    await interaction.reply({ content: '🗑️ **Deleted.**', ephemeral: true }).catch(() => {});
+                }
             } catch (err) {
                 logger.error(`Failed to delete message`, err);
                 return interaction.reply({ content: '❌ **Error!** Could not delete the message.', ephemeral: true });

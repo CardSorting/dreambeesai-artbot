@@ -337,7 +337,8 @@ async function handleGeniusSuggestions(interaction, originalInteractionId, image
     const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
-    
+    if (!generationData) return interaction.editReply({ content: '❌ Original generation data not found.' });
+
     try {
         const API_URL = process.env.DREAMBEES_API_URL;
         const API_KEY = process.env.DREAMBEES_API_KEY;
@@ -396,6 +397,7 @@ async function handleViewParent(interaction, originalInteractionId, imageIndex, 
     const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
+    if (!generationData) return interaction.editReply({ content: '❌ Original generation data not found.' });
     const parentImageId = generationData.parentImageId;
 
     if (!parentImageId || parentImageId === 'external') {
@@ -430,7 +432,7 @@ async function handleViewParent(interaction, originalInteractionId, imageIndex, 
     }
 }
 
-async function handleShowRemixModal(interaction, originalInteractionId, imageIndex, strength = 0.75, focus = 'all') {
+async function handleShowRemixModal(interaction, originalInteractionId, imageIndex, strength = 0.75, focus = 'all', ctx = {}) {
     const generationData = await getGeneration(originalInteractionId);
     if (!generationData) {
         return interaction.reply({ content: '❌ Original generation data not found.', ephemeral: true });
@@ -468,9 +470,8 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     const userProfile = await getUserByDiscordId(interaction.user.id);
     if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
 
-    // Fetch Style Mimic from user profile
-    const userDoc = await db.collection('discord_users').doc(interaction.user.id).get();
-    const styleMimic = userDoc.exists ? userDoc.data()?.currentStyleMimic : undefined;
+    // Style Mimic is stored on the user profile doc (set by handleLockStyle)
+    const styleMimic = userProfile.currentStyleMimic || undefined;
 
     // 1. Safety Guard
     const isSafe = await Hive.guardHive(instructions, { 
@@ -536,7 +537,7 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     }
 }
 
-async function getAlchemistInsight(prompt, instructions) {
+async function getAlchemistInsight(prompt, instructions, ctxLogger = logger, signal = null) {
     try {
         const API_URL = process.env.DREAMBEES_API_URL;
         const API_KEY = process.env.DREAMBEES_API_KEY;
@@ -553,17 +554,18 @@ async function getAlchemistInsight(prompt, instructions) {
                     instructions: `Act as a mystical creative mentor. Provide a one-sentence artistic critique or suggestion for the next evolutionary step based on these instructions: "${instructions}". Keep it short and evocative.`
                 }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal
         }, 10000);
 
         const { result } = await response.json();
-        return result.prompt.substring(0, 200);
+        return result?.prompt?.substring(0, 200) || "The essence defies simple description.";
     } catch (e) {
         return "The astral paths are clouded, but the vision remains potent.";
     }
 }
 
-async function getLoreFragment(prompt) {
+async function getLoreFragment(prompt, ctxLogger = logger, signal = null) {
     try {
         const API_URL = process.env.DREAMBEES_API_URL;
         const API_KEY = process.env.DREAMBEES_API_KEY;
@@ -580,11 +582,12 @@ async function getLoreFragment(prompt) {
                     instructions: "Act as a chronicler of the void. Provide a one-sentence, epic fragment of lore for this image. Be concise, mysterious, and building a mythology. Start the lore immediately without prefix."
                 }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal
         }, 10000);
 
         const { result } = await response.json();
-        return result.prompt.substring(0, 200).replace(/^Fragment of Lore:|^Lore Fragment:|^Lore: /i, '').trim();
+        return (result?.prompt || '').substring(0, 200).replace(/^Fragment of Lore:|^Lore Fragment:|^Lore: /i, '').trim() || "Not even the stars remember the origin of this Vision.";
     } catch (e) {
         return "Not even the stars remember the origin of this Vision.";
     }
@@ -633,7 +636,7 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
         });
 
     } catch (e) {
-        logger.error(`Vibe Grid failed`, e);
+        ctxLogger.error(`Vibe Grid failed`, e);
         await interaction.editReply({ content: `❌ **Vibe Grid Failed:** ${e.message}` });
     }
 }

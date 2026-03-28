@@ -35,11 +35,11 @@ jest.unstable_mockModule('../lib/firebase.js', () => ({
 
 // 2. Import Modular SUTs via dynamic import
 const { getUserByDiscordId, getOrCreateDiscordUser } = await import('../lib/db/users.js');
-const { saveGeneration, getGeneration, addReport } = await import('../lib/db/generations.js');
-const { getGuildConfig, setGuildConfig, getRemoteConfig } = await import('../lib/db/config.js');
-const { tryLock, releaseLock, cleanupStaleLocks } = await import('../lib/db/locks.js');
+const { saveGeneration, addReport } = await import('../lib/db/generations.js');
+const { getGuildConfig, getRemoteConfig } = await import('../lib/db/config.js');
+const { tryLock, releaseLock } = await import('../lib/db/locks.js');
 const { setCooldown, getRemainingCooldown } = await import('../lib/db/cooldowns.js');
-const { getStudioThreadId, setStudioThreadId } = await import('../lib/db/threads.js');
+const { getStudioThreadId } = await import('../lib/db/threads.js');
 const { db } = await import('../lib/firebase.js');
 
 describe('Modular Database Layer (artbot_ isolation)', () => {

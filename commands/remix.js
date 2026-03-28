@@ -36,7 +36,7 @@ export async function execute(interaction) {
                 const url = new URL(input);
                 if (!['http:', 'https:'].includes(url.protocol)) throw new Error("Invalid protocol");
                 imageUrl = input;
-            } catch (err) {
+            } catch {
                 return interaction.editReply({ content: '❌ Please provide a valid HTTP/HTTPS image URL.' });
             }
         } else {

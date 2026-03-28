@@ -1,6 +1,6 @@
 import { Wallet } from '../lib/wallet.js';
 import { getOrCreateDiscordUser } from '../lib/db/users.js';
-import { db, logger } from '../lib/firebase.js';
+import { db } from '../lib/firebase.js';
 import dotenv from 'dotenv';
 dotenv.config();
 

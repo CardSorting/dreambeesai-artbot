@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { calculateBatchCost } from './lib/models.js';
 
 console.log('--- FORTRESS TEST START ---');

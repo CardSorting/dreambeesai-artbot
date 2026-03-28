@@ -4,7 +4,7 @@ import { getGeneration, saveGeneration } from '../lib/db/generations.js';
 import { getUserByDiscordId } from '../lib/db/users.js';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
-import { stitchImages, validateImageBuffer, stitchSideBySide, stitchNarrativeStrip } from '../lib/image-processor.js';
+import { stitchImages, stitchSideBySide, stitchNarrativeStrip } from '../lib/image-processor.js';
 import { uploadToS3 } from '../lib/s3.js';
 import { Wallet } from '../lib/wallet.js';
 import * as Hive from '../lib/hive.js';
@@ -105,7 +105,7 @@ async function handleSummonPrism(interaction, originalInteractionId, imageIndex,
     const requestId = `prism_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, PRISM_COST, requestId, { action: 'prism_render' });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(PRISM_COST, userProfile.zaps || 0) });
     }
 
@@ -135,7 +135,7 @@ async function handleSummonPrism(interaction, originalInteractionId, imageIndex,
         });
 
     } catch (e) {
-        ctxLogger.error(`Prism failed`, e);
+        ctxLogger.error(`Prism failed`, { error: e.message });
         await interaction.editReply({ content: `❌ **Prism Failed:** ${e.message}` });
     }
 }
@@ -159,7 +159,7 @@ async function handleShowMatchModal(interaction, originalInteractionId, imageInd
 }
 
 async function handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions, ctx) {
-    const { logger: ctxLogger = logger, signal } = ctx;
+    const { logger: ctxLogger = logger } = ctx;
     await interaction.deferReply({ ephemeral: true });
     
     // 1. Safety Guard
@@ -186,7 +186,7 @@ async function handleGenerateMatchProcess(interaction, originalInteractionId, im
     const requestId = `match_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, MATCH_COST, requestId, { action: 'dna_match' });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(MATCH_COST, userProfile.zaps || 0) });
     }
 
@@ -207,7 +207,7 @@ async function handleGenerateMatchProcess(interaction, originalInteractionId, im
 
         await interaction.editReply({ content: '', embeds: [embed] });
     } catch (e) {
-        ctxLogger.error('Match failed', e);
+        ctxLogger.error('Match failed', { error: e.message });
         await interaction.editReply({ content: `❌ **Match Failed:** ${e.message}` });
     }
 }
@@ -262,7 +262,7 @@ async function handleViewMural(interaction, originalInteractionId, imageIndex, c
             files: [new AttachmentBuilder(muralBuffer, { name: 'mural.png' })]
         });
     } catch (e) {
-        ctxLogger.error("Mural failed", e);
+        ctxLogger.error("Mural failed", { error: e.message });
         await interaction.editReply({ content: "❌ Failed to weave the Lineage Mural." });
     }
 }
@@ -280,7 +280,7 @@ async function handleExploreVariations(interaction, originalInteractionId, image
     const requestId = `variations_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, VARIATION_COST, requestId, { action: 'exploration' });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(VARIATION_COST, userProfile.zaps || 0) });
     }
 
@@ -310,7 +310,7 @@ async function handleExploreVariations(interaction, originalInteractionId, image
         });
 
     } catch (e) {
-        ctxLogger.error(`Variation Grid failed`, e);
+        ctxLogger.error(`Variation Grid failed`, { error: e.message });
         await interaction.editReply({ content: `❌ **Variation Neighborhood Failed:** ${e.message}` });
     }
 }
@@ -434,7 +434,7 @@ async function handleViewParent(interaction, originalInteractionId, imageIndex, 
     }
 }
 
-async function handleShowRemixModal(interaction, originalInteractionId, imageIndex, strength = 0.75, focus = 'all', ctx = {}) {
+async function handleShowRemixModal(interaction, originalInteractionId, imageIndex, strength = 0.75, focus = 'all') {
     const generationData = await getGeneration(originalInteractionId);
     if (!generationData) {
         return interaction.reply({ content: '❌ Original generation data not found.', ephemeral: true });
@@ -539,7 +539,7 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     }
 }
 
-async function getAlchemistInsight(prompt, instructions, ctxLogger = logger, signal = null) {
+async function getAlchemistInsight(prompt, instructions, signal = null) {
     try {
         const API_URL = process.env.DREAMBEES_API_URL;
         const API_KEY = process.env.DREAMBEES_API_KEY;
@@ -562,12 +562,12 @@ async function getAlchemistInsight(prompt, instructions, ctxLogger = logger, sig
 
         const { result } = await response.json();
         return result?.prompt?.substring(0, 200) || "The essence defies simple description.";
-    } catch (e) {
+    } catch {
         return "The astral paths are clouded, but the vision remains potent.";
     }
 }
 
-async function getLoreFragment(prompt, ctxLogger = logger, signal = null) {
+async function getLoreFragment(prompt, signal = null) {
     try {
         const API_URL = process.env.DREAMBEES_API_URL;
         const API_KEY = process.env.DREAMBEES_API_KEY;
@@ -590,7 +590,7 @@ async function getLoreFragment(prompt, ctxLogger = logger, signal = null) {
 
         const { result } = await response.json();
         return (result?.prompt || '').substring(0, 200).replace(/^Fragment of Lore:|^Lore Fragment:|^Lore: /i, '').trim() || "Not even the stars remember the origin of this Vision.";
-    } catch (e) {
+    } catch {
         return "Not even the stars remember the origin of this Vision.";
     }
 }
@@ -617,7 +617,6 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
         const gridBuffer = await stitchImages(buffers, { logger: ctxLogger });
         
         const gridFilename = `remix-grids/${interaction.id}.webp`;
-        const gridUrl = `https://${process.env.B2_BUCKET}.${process.env.B2_ENDPOINT}/${gridFilename}`;
         await uploadToS3(gridFilename, gridBuffer);
 
         const embed = new EmbedBuilder()
@@ -645,7 +644,7 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
 
 // Core remix generation logic with lineage tracking
 async function generateRemix(generationData, imageIndex, instructions, uid, interaction, options = {}) {
-    const { strength = 0.75, focus = 'all', styleMimic = null, logger: ctxLogger = logger, signal } = typeof options === 'object' ? options : { strength: options };
+    const { strength = 0.75, focus = 'all', styleMimic = null, signal } = typeof options === 'object' ? options : { strength: options };
     
     const API_URL = process.env.DREAMBEES_API_URL;
     const API_KEY = process.env.DREAMBEES_API_KEY;

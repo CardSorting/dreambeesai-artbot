@@ -16,7 +16,12 @@ RUN npm ci
 
 # Copy source and prune
 COPY . .
-RUN npm prune --production
+RUN npm prune --production \
+    && find node_modules -name "*.map" -type f -delete \
+    && find node_modules -name "README*" -type f -delete \
+    && find node_modules -name "LICENSE*" -type f -delete \
+    && find node_modules -name "*.md" -type f -delete \
+    && find node_modules -name "*.txt" -type f -delete
 
 # --- STAGE 2: Hardened Production Runtime ---
 # We use the same slim base for glibc compatibility with Sharp

@@ -2,6 +2,7 @@
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 process.env.PORT = process.env.PORT || '8080';
 
+/* eslint-disable no-console */
 console.log('--- SYSTEM BOOT ---');
 console.log('Environment:', { 
     NODE_ENV: process.env.NODE_ENV, 
@@ -10,10 +11,10 @@ console.log('Environment:', {
     Node: process.version,
     Platform: process.platform
 });
+/* eslint-enable no-console */
 
 import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import http from 'http';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -24,7 +25,7 @@ import { cleanupStaleLocks } from './lib/db/locks.js';
 import { recoverZombieTransactions } from './lib/db/recovery.js';
 import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
 import { getOrCreateDiscordUser } from './lib/db/users.js';
-import { toSafeNumber } from './lib/utils.js';
+// --- TELEMETRY BINDING ---
 
 // --- TELEMETRY BINDING ---
 const systemContext = {
@@ -36,7 +37,9 @@ const systemContext = {
 const globalLogger = logger.child(systemContext);
 let isInitialized = false;
 
+/* eslint-disable no-console */
 console.log('--- STARTING DREAMBEES BOT ---');
+/* eslint-enable no-console */
 
 import { isCircuitOpen } from './lib/api/dreambees.js';
 import { HiveInteraction } from './lib/discord-ux.js';
@@ -99,7 +102,7 @@ function startSanityMonitor(activeJobs) {
 }
 
 // --- GLOBAL PROCESS HARDENING ---
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
     const context = {
         uptime: `${Math.floor(process.uptime() / 60)}m`,
         memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
@@ -299,13 +302,10 @@ export async function handleInteraction(interaction, client, activeJobs) {
         const photoURL = interaction.user ? interaction.user.displayAvatarURL({ extension: 'png', size: 256 }) : null;
         const userId = interaction.user?.id;
         const userTag = interaction.user?.tag;
-        const guild = interaction.guild;
-        const member = interaction.member;
-        
         if (!userId) throw new Error("Interaction missing user profile context");
 
         await getOrCreateDiscordUser(userId, userTag, photoURL)
-            .catch(err => ctxLogger.error("Identity Provisioning Failed", err));
+            .catch(() => ctxLogger.error("Identity Provisioning Failed"));
 
         if (interaction.isChatInputCommand()) {
             const command = client.commands.get(interaction.commandName);

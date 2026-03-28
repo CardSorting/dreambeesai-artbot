@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { abortableSleep } from './lib/utils.js';
 
 async function testTitanium() {

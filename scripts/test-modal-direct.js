@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
 import { generateSingleImage } from '../lib/api/dreambees.js';
-import { db, currentUser } from '../lib/firebase.js';
 import { logger } from '../lib/logger.js';
 
 dotenv.config();
@@ -9,7 +8,7 @@ async function runTest() {
     // Wait for auth to settle
     await new Promise(r => setTimeout(r, 2000));
     
-    const userId = currentUser?.uid || "test-user-direct-modal";
+    const userId = "test-user-direct-modal";
     const prompt = "A futuristic cyberpunk bee, high detail, neon lights, 4k";
     const modelId = "wai-illustrious";
 

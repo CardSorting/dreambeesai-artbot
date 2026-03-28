@@ -3,7 +3,7 @@ import { getGeneration } from '../lib/db/generations.js';
 import { getUserByDiscordId } from '../lib/db/users.js';
 import sharp from 'sharp';
 import { logger } from '../lib/logger.js';
-import { fetchWithTimeout, keepAliveAgent, registerDiscordGrid } from '../lib/api/dreambees.js';
+import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 import { Wallet } from '../lib/wallet.js';
 import * as Hive from '../lib/hive.js';
 import { CONFIG } from '../lib/config-check.js';
@@ -169,7 +169,7 @@ async function handleGenerateMockup(interaction, originalInteractionId, imageInd
     const requestId = `mockup_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, MOCKUP_COST, requestId, { action: 'mockup_render', itemId, envId });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(MOCKUP_COST, 0), components: [] });
     }
 
@@ -249,7 +249,7 @@ async function handleGenerateGrid(interaction, originalInteractionId, imageIndex
     const requestId = `grid_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, GRID_COST, requestId, { action: 'mockup_grid', itemId });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(GRID_COST, 0), components: [] });
     }
 
@@ -349,7 +349,7 @@ async function handleGacha(interaction, originalInteractionId, imageIndex) {
     const requestId = `gacha_${interaction.id}`;
     try {
         await Wallet.debit(interaction.user.id, GACHA_COST, requestId, { action: 'mockup_gacha' });
-    } catch (err) {
+    } catch {
         return interaction.editReply({ content: Hive.Voice.emptyJar(GACHA_COST, 0), components: [] });
     }
 

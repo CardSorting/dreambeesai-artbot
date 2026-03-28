@@ -1,4 +1,4 @@
-import { db, admin, logger } from '../lib/firebase.js';
+import { db, admin } from '../lib/firebase.js';
 import { saveGeneration } from '../lib/db/generations.js';
 import { getOrCreateDiscordUser } from '../lib/db/users.js';
 import crypto from 'crypto';

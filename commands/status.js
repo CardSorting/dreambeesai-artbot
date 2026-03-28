@@ -33,7 +33,7 @@ export async function execute(interaction) {
         try {
             const claimDoc = await db.collection('discord_users').doc(discordId).collection('claims').doc(dateId).get();
             isAvailable = !claimDoc.exists;
-        } catch (e) {
+        } catch {
             // If we can't check, default to showing as available
         }
 

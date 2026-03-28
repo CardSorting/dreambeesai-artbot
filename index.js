@@ -130,7 +130,28 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-    ]
+    ],
+    // --- EXTREME HARDENING: Memory & Cache Management ---
+    // Specifically designed to flatten the memory growth curve over long uptime sessions.
+    makeCache: (manager) => {
+        if (manager.name === 'MessageManager') return new Collection({ maxSize: 100 }); // Minimal message cache (only for interactions)
+        if (manager.name === 'GuildMemberManager') return new Collection({ maxSize: 50 }); // Minimal member cache
+        return new Collection();
+    },
+    sweepers: {
+        messages: {
+            interval: 3600, // Every hour
+            lifetime: 1800, // Prune messages older than 30m
+        },
+        threads: {
+            interval: 3600,
+            lifetime: 3600, // Prune inactive threads after 1h
+        },
+        reactions: {
+            interval: 3600,
+            filter: () => true, // Prune all reactions from cache regularly
+        }
+    }
 });
 
 const activeJobs = new Map(); // interactionId -> AbortController
@@ -496,10 +517,11 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             return;
         }
 
-        // 2. Health Checks
+        // 2. Health Checks (Dependency-Aware)
         if (url.pathname === '/healthz' || url.pathname === '/') {
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
-            const isApiHealthy = !isCircuitOpen();
+            const isGenApiHealthy = !isCircuitOpen('generation');
+            const isRegApiHealthy = !isCircuitOpen('registration');
 
             // Non-blocking DB Check with timeout and REAL write-read verification
             let isDbHealthy = true;
@@ -507,10 +529,9 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             if (client.isReady()) {
                 const dbCheckPromise = (async () => {
                     const probeRef = db.collection('_health').doc('probe');
-                    // Perform a lightweight write-read to verify full Firestore connectivity
                     await probeRef.set({ 
                         lastCheck: admin.firestore.FieldValue.serverTimestamp(),
-                        node: process.env.HOSTNAME || 'local-mac'
+                        node: process.env.HOSTNAME || 'unknown'
                     });
                     const snap = await probeRef.get();
                     return snap.exists;
@@ -527,30 +548,24 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
                 }
             }
     
-            const isHealthy = isClientReady && isApiHealthy && isDbHealthy;
+            const isHealthy = isClientReady && isGenApiHealthy && isDbHealthy;
     
-            if (isHealthy) {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    status: 'UP',
-                    uptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
-                    memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
-                    activeJobs: activeJobs.size,
-                    node: process.env.HOSTNAME || 'local-mac',
-                    dependencies: { discord: 'OK', api: 'OK', db: 'OK' }
-                }));
-            } else {
-                res.writeHead(503, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    status: 'DOWN',
-                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : `Database Error: ${dbDetails}`),
-                    dependencies: {
-                        discord: isClientReady ? 'OK' : 'ERR',
-                        api: isApiHealthy ? 'OK' : 'ERR',
-                        db: dbDetails
-                    }
-                }));
-                logger.warn('Production health check failed', { isClientReady, isApiHealthy, isDbHealthy, dbDetails });
+            res.writeHead(isHealthy ? 200 : 503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                status: isHealthy ? 'UP' : 'DEGRADED',
+                uptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
+                memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+                node: process.env.HOSTNAME || 'unknown',
+                dependencies: {
+                    discord: isClientReady ? 'OK' : 'ERR',
+                    db: dbDetails,
+                    api_generation: isGenApiHealthy ? 'OK' : 'CIRCUIT_OPEN',
+                    api_registration: isRegApiHealthy ? 'OK' : 'CIRCUIT_OPEN'
+                }
+            }));
+
+            if (!isHealthy) {
+                logger.warn('Health check reported degraded status', { isClientReady, isGenApiHealthy, isDbHealthy, dbDetails });
             }
         } else {
             res.writeHead(404);
@@ -596,11 +611,11 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         logger.warn('Discord.js Client Warning', { message });
     });
 
-    // Login with hard timeout protection
+    // Login with hard timeout protection (increased to 60s for GCE cold boots)
     const loginTimeout = setTimeout(() => {
-        logger.error('CRITICAL: Discord login timed out after 30s. Shutting down for restart.');
+        logger.error('CRITICAL: Discord login timed out after 60s. This frequently happens during GCE cold boots or network throttling.');
         process.exit(1);
-    }, 30000);
+    }, 60000);
 
     client.login(process.env.DISCORD_TOKEN).then(() => {
         clearTimeout(loginTimeout);

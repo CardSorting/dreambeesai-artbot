@@ -147,8 +147,8 @@ export async function handleInteraction(interaction, client, activeJobs) {
             // - Image commands: Defer as public (will be redirected to thread or shown publicly)
             // - Utility/Admin commands: Handle their own deferral/reply internally
             if (command.category === 'image') {
-                // 1. PUBLIC DEFER for image commands (thread redirect expects non-ephemeral)
-                await hiveInteraction.deferReply().catch(err => ctxLogger.error("Global Defer Failed", err));
+                // 1. EPHEMERAL DEFER for image commands (keep failures out of the channel)
+                await hiveInteraction.deferReply({ ephemeral: true }).catch(err => ctxLogger.error("Global Defer Failed", err));
 
                 // 2. THREADED REDIRECT (Seamless Art Studio)
                 if (!interaction.channel.isThread()) {

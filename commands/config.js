@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
-import { setGuildConfig, getGuildConfig } from '../lib/db.js';
+import { setGuildConfig, getGuildConfig } from '../lib/db/config.js';
 import { logger } from '../lib/logger.js';
 import * as Hive from '../lib/hive.js';
 

@@ -1,5 +1,7 @@
 import { ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { db, getGeneration, getUserByDiscordId, saveGeneration } from '../lib/db.js';
+import { db } from '../lib/firebase.js';
+import { getGeneration, saveGeneration } from '../lib/db/generations.js';
+import { getUserByDiscordId } from '../lib/db/users.js';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 import { stitchImages, validateImageBuffer, stitchSideBySide, stitchNarrativeStrip } from '../lib/image-processor.js';

@@ -1,4 +1,4 @@
-import { db } from '../lib/db.js';
+import { db } from '../lib/firebase.js';
 import { logger } from '../lib/logger.js';
 import dotenv from 'dotenv';
 dotenv.config();

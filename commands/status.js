@@ -1,5 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { getOrCreateDiscordUser, db, getRemoteConfig } from '../lib/db.js';
+import { getOrCreateDiscordUser } from '../lib/db/users.js';
+import { db } from '../lib/firebase.js';
+import { getRemoteConfig } from '../lib/db/config.js';
 import { logger } from '../lib/logger.js';
 import * as Hive from '../lib/hive.js';
 

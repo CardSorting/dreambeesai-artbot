@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { getOrCreateDiscordUser } from '../lib/db.js';
+import { getOrCreateDiscordUser } from '../lib/db/users.js';
 import { performGeneration } from '../lib/generator.js';
 import { MODELS, calculateBatchCost } from '../lib/models.js';
 import { logger } from '../lib/logger.js';

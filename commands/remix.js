@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
-import { saveGeneration, getUserByDiscordId } from '../lib/db.js';
+import { saveGeneration } from '../lib/db/generations.js';
+import { getUserByDiscordId } from '../lib/db/users.js';
 import { logger } from '../lib/logger.js';
 import * as Hive from '../lib/hive.js';
 

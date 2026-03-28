@@ -1,5 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } from 'discord.js';
-import { getGeneration, addReport, getGuildConfig } from '../lib/db.js';
+import { getGeneration, addReport } from '../lib/db/generations.js';
+import { getGuildConfig } from '../lib/db/config.js';
 import { logger } from '../lib/logger.js';
 
 export const customIdPrefix = 'gen_';

@@ -1,7 +1,8 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { Wallet } from '../lib/wallet.js';
 import { logger } from '../lib/logger.js';
-import { tryLock, releaseLock, setCooldown, getRemainingCooldown } from '../lib/db.js';
+import { tryLock, releaseLock } from '../lib/db/locks.js';
+import { setCooldown, getRemainingCooldown } from '../lib/db/cooldowns.js';
 import { recordClaimMetrics } from '../lib/metrics.js';
 import * as Hive from '../lib/hive.js';
 

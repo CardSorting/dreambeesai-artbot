@@ -1,5 +1,5 @@
 import { AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
-import { getGeneration } from '../lib/db.js';
+import { getGeneration } from '../lib/db/generations.js';
 import { logger } from '../lib/logger.js';
 import { fetchWithTimeout, keepAliveAgent } from '../lib/api/dreambees.js';
 

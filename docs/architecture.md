@@ -73,3 +73,9 @@ sequenceDiagram
 - **Locks**: Per-user Firestore locks prevent redundant generation requests.
 - **Retry Logic**: `uploadToS3WithRetry` ensures assets are stored even during transient network spikes.
 - **Abuse Backoff**: Integrated with the Hive moderation to automatically restrict malicious actors.
+
+---
+
+## ☁️ Cloud Integration
+
+- **[Google Cloud Tasks](cloudtasks.md)**: Asynchronous generation queue for reliable, long-running image creation.

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
 import * as Hive from './lib/hive.js';
 import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db } from './lib/db.js';
+import { isCircuitOpen } from './lib/api/dreambees.js';
 import { ThreadedInteraction } from './lib/discord-ux.js';
 
 // --- CONFIGURATION ---
@@ -94,7 +95,7 @@ client.once('ready', async () => {
 });
 
 export async function handleInteraction(interaction, client, activeJobs) {
-    const interactionLogger = logger.child({
+    const ctxLogger = logger.child({
         interactionId: interaction.id,
         userId: interaction.user.id,
         userTag: interaction.user.tag,
@@ -102,102 +103,80 @@ export async function handleInteraction(interaction, client, activeJobs) {
     });
 
     try {
+        const photoURL = interaction.user.displayAvatarURL({ extension: 'png', size: 256 }) || null;
+        await getOrCreateDiscordUser(interaction.user.id, interaction.user.tag, photoURL)
+            .catch(err => ctxLogger.error("Identity Provisioning Failed", err));
+
         if (interaction.isChatInputCommand()) {
             const command = client.commands.get(interaction.commandName);
             if (!command) return;
 
             activeJobs.add(interaction.id);
             
-            // Enforce thread-only restriction for image generation with seamless transition
+            // UNIFORM HIVE PROXY
+            let hiveInteraction = null;
+
             if (command.category === 'image' && !interaction.channel.isThread()) {
                 const permissions = interaction.appPermissions;
                 if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
                     return await interaction.reply({ 
-                        content: '❌ **Permissions Error:** I need permission to create threads and send messages in them to work seamlessly in this channel. Please ask an admin to check my permissions!', 
+                        content: '❌ **Permissions Error:** I need permission to create threads to work seamlessly!', 
                         ephemeral: true 
                     });
                 }
 
                 try {
-                    // SEAMLESS ART STUDIO REUSE LOGIC
-                    // Use database-backed lookup for maximum reliability
                     const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
                     let thread = null;
-                    
-                    if (storedThreadId) {
-                        thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
-                    }
+                    if (storedThreadId) thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
 
-                    // Fallback to name-based lookup if DB lookup failed (e.g. initial migration or DB issue)
                     if (!thread) {
                         const allThreads = await interaction.channel.threads.fetch();
-                        thread = allThreads.threads.find(t => 
-                            t.ownerId === interaction.client.user.id && 
-                            t.name.includes(`${interaction.user.username}'s Art Studio`)
-                        );
+                        thread = allThreads.threads.find(t => t.ownerId === interaction.client.user.id && t.name.includes(`${interaction.user.username}'s Art Studio`));
                     }
 
-                    let isNewThread = false;
                     if (!thread) {
-                        const threadName = `🎨 ${interaction.user.username}'s Art Studio`;
-                        thread = await interaction.channel.threads.create({
-                            name: threadName,
-                            autoArchiveDuration: 60,
-                            reason: 'Seamless art studio creation'
-                        });
-                        isNewThread = true;
-                        // Save the new thread ID to the database
+                        thread = await interaction.channel.threads.create({ name: `🎨 ${interaction.user.username}'s Art Studio`, autoArchiveDuration: 60 });
                         await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
+                        await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
                     } else if (thread.archived) {
-                        await thread.setArchived(false, 'Re-opening studio for new generation');
+                        await thread.setArchived(false);
                     }
 
-                    const threadedInteraction = new ThreadedInteraction(interaction, thread);
-                    
-                    await interaction.reply({ 
-                        content: `✅ **Drawing Room Ready!** I've ${isNewThread ? 'created' : 'opened'} your personal Art Studio: ${thread.toString()}`, 
-                        ephemeral: true 
-                    });
-
-                    if (isNewThread) {
-                        await thread.send({
-                            content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨\nAll your generations in this channel will be tucked away here to keep things tidy.`
-                        });
-                    }
-
-                    return await command.execute(threadedInteraction);
+                    hiveInteraction = new HiveInteraction(interaction, thread);
+                    await interaction.reply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}`, ephemeral: true });
                 } catch (e) {
-                    interactionLogger.error("Failed to create seamless thread", { error: e.message, stack: e.stack });
-                    return await interaction.reply({ 
-                        content: '❌ **Threads Only!** Please create a thread to start creating! (Automatic thread creation failed)', 
-                        ephemeral: true 
-                    });
+                    ctxLogger.error("Failed to create seamless thread", e);
+                    hiveInteraction = new HiveInteraction(interaction); // Fallback to regular but proxied
                 }
+            } else {
+                hiveInteraction = new HiveInteraction(interaction);
             }
 
-            await command.execute(interaction);
+            return await command.execute(hiveInteraction, { logger: ctxLogger });
+
         } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
             const matchedPrefix = Array.from(client.buttonInteractions.keys()).find(prefix => interaction.customId.startsWith(prefix));
             
             if (matchedPrefix) {
                 const handler = client.buttonInteractions.get(matchedPrefix);
                 activeJobs.add(interaction.id);
-                await handler.execute(interaction);
+                // Wrap component interactions in the safety proxy as well
+                const hiveInteraction = new HiveInteraction(interaction);
+                await handler.execute(hiveInteraction, { logger: ctxLogger });
             }
         }
     } catch (error) {
-        interactionLogger.error(`Unhandled interaction error`, {
-            error: error.message,
-            stack: error.stack,
-            customId: interaction.customId,
-            commandName: interaction.commandName
-        });
+        ctxLogger.error('Interaction processing failed', error);
         
         const errorMessage = { content: Hive.Voice.failure, ephemeral: true };
-        if (interaction.replied || interaction.deferred) {
+        
+        if (interaction.deferred || interaction.replied) {
             await interaction.editReply(errorMessage).catch(() => {});
         } else {
-            await interaction.reply(errorMessage).catch(() => {});
+            if (interaction.isRepliable()) {
+                await interaction.reply(errorMessage).catch(() => {});
+            }
         }
     } finally {
         activeJobs.delete(interaction.id);
@@ -217,20 +196,63 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     // Robust HTTP Server for Cloud Run Health Checks
     const port = process.env.PORT || 8080;
     const startTime = Date.now();
-    const server = http.createServer((req, res) => {
-        // Only return 200 if the Discord client is actually logged in and ready
-        // Give a 30-second grace period for initial connection
-        if (client.isReady() || (Date.now() - startTime < 30000)) {
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end('DreamBees Hive: ONLINE 🐝');
+    const server = http.createServer(async (req, res) => {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        if (url.pathname === '/healthz' || url.pathname === '/') {
+            const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
+            const isApiHealthy = !isCircuitOpen();
+            
+            // Lightweight DB Check (only if client is ready)
+            let isDbHealthy = true;
+            if (client.isReady()) {
+                try {
+                    // Check if we can at least reach the collection shim
+                    const healthRef = db.collection('_health').doc('probe');
+                    if (!healthRef) isDbHealthy = false;
+                } catch (e) {
+                    isDbHealthy = false;
+                }
+            }
+
+            const isHealthy = isClientReady && isApiHealthy && isDbHealthy;
+
+            if (isHealthy) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'UP', dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' } }));
+            } else {
+                res.writeHead(503, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ 
+                    status: 'DOWN', 
+                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : 'Database Error'),
+                    dependencies: { 
+                        discord: isClientReady ? 'OK' : 'ERR', 
+                        api: isApiHealthy ? 'OK' : 'ERR', 
+                        db: isDbHealthy ? 'OK' : 'ERR' 
+                    } 
+                }));
+                logger.warn('Production health check failed', { isClientReady, isApiHealthy, isDbHealthy });
+            }
         } else {
-            res.writeHead(503, { 'Content-Type': 'text/plain' });
-            res.end('DreamBees Hive: STARTING/RECONNECTING... ⏳');
-            logger.warn('Health check failed: Discord client not ready after grace period');
+            res.writeHead(404);
+            res.end();
         }
     }).listen(port, () => {
-        logger.info(`Health check server listening on port ${port}`);
+        logger.info(`Dependency-aware health probe listening on port ${port}`);
     });
+
+    // 5. Cleanup Heartbeat (Every 15 Minutes)
+    setInterval(async () => {
+        try {
+            logger.info("Heartbeat: Running proactive maintenance...");
+            const recovered = await recoverZombieTransactions();
+            const locksCleaned = await cleanupStaleLocks();
+            if (recovered > 0 || locksCleaned > 0) {
+                logger.info("Maintenance complete", { recovered, locksCleaned });
+            }
+        } catch (err) {
+            logger.error("Maintenance heartbeat failed", err);
+        }
+    }, 15 * 60 * 1000);
 
     client.login(process.env.DISCORD_TOKEN);
 

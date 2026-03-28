@@ -27,64 +27,68 @@ const PRISM_COST = CONFIG.COSTS.PRISM;
 const VARIATION_COST = CONFIG.COSTS.VARIATION;
 const MATCH_COST = CONFIG.COSTS.MATCH;
 
-export async function execute(interaction) {
+export async function execute(interaction, options = {}) {
+    const { logger: ctxLogger = logger } = options;
     const parts = interaction.customId.split('_');
     const action = parts[1]; // 'upscale', 'vibe', 'vibegrid', or 'tools'
     const originalInteractionId = parts[2];
     const imageIndex = parseInt(parts[3], 10);
     const vibeId = parts[4]; 
 
+    const ctx = { logger: ctxLogger, signal: interaction.signal };
+
     if (action === 'upscale' && interaction.isButton()) {
-        await handleShowRemixModal(interaction, originalInteractionId, imageIndex);
+        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'all', ctx);
     } else if (action === 'upscale' && interaction.isModalSubmit()) {
         const instructions = interaction.fields.getTextInputValue('instructions');
         const strength = interaction.customId.includes('_str_') ? parseFloat(interaction.customId.split('_str_')[1]) : 0.75;
-        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instructions, { strength });
+        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instructions, { strength, ...ctx });
     } else if (action === 'vibe') {
         const instructions = VIBE_INSTRUCTIONS[vibeId];
-        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instructions);
+        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instructions, ctx);
     } else if (action === 'vibegrid') {
-        await handleEliteVibeGrid(interaction, originalInteractionId, imageIndex);
+        await handleEliteVibeGrid(interaction, originalInteractionId, imageIndex, ctx);
     } else if (action === 'tools' && interaction.isStringSelectMenu()) {
-        await handleRemixTools(interaction, originalInteractionId, imageIndex);
+        await handleRemixTools(interaction, originalInteractionId, imageIndex, ctx);
     } else if (action === 'genius' && interaction.isButton()) {
-        const instruction = parts[4]; // The specific suggestion
-        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instruction);
+        const instruction = parts[4]; 
+        await handleRemixProcess(interaction, originalInteractionId, imageIndex, instruction, ctx);
     } else if (action === 'match' && interaction.isModalSubmit()) {
         const instructions = interaction.fields.getTextInputValue('instructions');
-        await handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions);
+        await handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions, ctx);
     }
 }
 
-async function handleRemixTools(interaction, originalInteractionId, imageIndex) {
+async function handleRemixTools(interaction, originalInteractionId, imageIndex, ctx) {
     const choice = interaction.values[0];
     
     if (choice === 'genius') {
-        await handleGeniusSuggestions(interaction, originalInteractionId, imageIndex);
+        await handleGeniusSuggestions(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'strength_low') {
-        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.5);
+        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.5, 'all', ctx);
     } else if (choice === 'strength_high') {
-        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.9);
+        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.9, 'all', ctx);
     } else if (choice === 'history') {
-        await handleViewParent(interaction, originalInteractionId, imageIndex);
+        await handleViewParent(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'focus_subject') {
-        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'subject');
+        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'subject', ctx);
     } else if (choice === 'focus_environment') {
-        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'environment');
+        await handleShowRemixModal(interaction, originalInteractionId, imageIndex, 0.75, 'environment', ctx);
     } else if (choice === 'lock_style') {
-        await handleLockStyle(interaction, originalInteractionId, imageIndex);
+        await handleLockStyle(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'explore_variations') {
-        await handleExploreVariations(interaction, originalInteractionId, imageIndex);
+        await handleExploreVariations(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'generate_match') {
-        await handleShowMatchModal(interaction, originalInteractionId, imageIndex);
+        await handleShowMatchModal(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'view_mural') {
-        await handleViewMural(interaction, originalInteractionId, imageIndex);
+        await handleViewMural(interaction, originalInteractionId, imageIndex, ctx);
     } else if (choice === 'summon_prism') {
-        await handleSummonPrism(interaction, originalInteractionId, imageIndex);
+        await handleSummonPrism(interaction, originalInteractionId, imageIndex, ctx);
     }
 }
 
-async function handleSummonPrism(interaction, originalInteractionId, imageIndex) {
+async function handleSummonPrism(interaction, originalInteractionId, imageIndex, ctx) {
+    const { logger: ctxLogger = logger } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
     if (!generationData) return interaction.editReply({ content: '❌ Data not found.' });
@@ -104,7 +108,7 @@ async function handleSummonPrism(interaction, originalInteractionId, imageIndex)
 
     try {
         const dimensions = Object.keys(PRISM_INSTRUCTIONS);
-        const results = await Promise.all(dimensions.map(d => generateRemix(generationData, imageIndex, PRISM_INSTRUCTIONS[d], userProfile.uid, interaction)));
+        const results = await Promise.all(dimensions.map(d => generateRemix(generationData, imageIndex, PRISM_INSTRUCTIONS[d], userProfile.uid, interaction, { ...ctx })));
 
         await interaction.editReply({ content: '🪄 **Fracturing Reality...**' });
 
@@ -126,7 +130,7 @@ async function handleSummonPrism(interaction, originalInteractionId, imageIndex)
         });
 
     } catch (e) {
-        logger.error(`Prism failed`, e);
+        ctxLogger.error(`Prism failed`, e);
         await interaction.editReply({ content: `❌ **Prism Failed:** ${e.message}` });
     }
 }
@@ -149,7 +153,8 @@ async function handleShowMatchModal(interaction, originalInteractionId, imageInd
     await interaction.showModal(modal);
 }
 
-async function handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions) {
+async function handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions, ctx) {
+    const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     
     // 1. Safety Guard
@@ -160,7 +165,7 @@ async function handleGenerateMatchProcess(interaction, originalInteractionId, im
     });
 
     if (!isSafe) {
-        logger.warn(`Unsafe match instruction rejected`, { discordId: interaction.user.id, instructions });
+        ctxLogger.warn(`Unsafe match instruction rejected`, { instructions });
         return interaction.editReply({ content: Hive.Voice.safety });
     }
 
@@ -184,8 +189,9 @@ async function handleGenerateMatchProcess(interaction, originalInteractionId, im
 
     try {
         const result = await generateRemix(generationData, imageIndex, instructions, userProfile.uid, interaction, {
-            strength: 1.0, // High strength because we want a total match of style on a new subject
-            styleMimic
+            strength: 1.0, 
+            styleMimic,
+            ...ctx
         });
 
         const embed = new EmbedBuilder()
@@ -196,11 +202,13 @@ async function handleGenerateMatchProcess(interaction, originalInteractionId, im
 
         await interaction.editReply({ content: '', embeds: [embed] });
     } catch (e) {
+        ctxLogger.error('Match failed', e);
         await interaction.editReply({ content: `❌ **Match Failed:** ${e.message}` });
     }
 }
 
-async function handleViewMural(interaction, originalInteractionId, imageIndex) {
+async function handleViewMural(interaction, originalInteractionId, imageIndex, ctx) {
+    const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const current = await getGeneration(originalInteractionId);
     if (!current) return interaction.editReply({ content: "❌ Current generation not found." });
@@ -226,10 +234,11 @@ async function handleViewMural(interaction, originalInteractionId, imageIndex) {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-API-KEY": API_KEY },
                 body: JSON.stringify({ data: { action: "getImageDetail", imageId: id } }),
-                agent: keepAliveAgent
+                agent: keepAliveAgent,
+                signal
             }, 10000);
             const { result } = await res.json();
-            const imgRes = await fetchWithTimeout(result.imageUrl, { agent: keepAliveAgent }, 15000);
+            const imgRes = await fetchWithTimeout(result.imageUrl, { agent: keepAliveAgent, signal }, 15000);
             urlBuffers.push(Buffer.from(await imgRes.arrayBuffer()));
         }
 
@@ -248,12 +257,13 @@ async function handleViewMural(interaction, originalInteractionId, imageIndex) {
             files: [new AttachmentBuilder(muralBuffer, { name: 'mural.png' })]
         });
     } catch (e) {
-        logger.error("Mural failed", e);
+        ctxLogger.error("Mural failed", e);
         await interaction.editReply({ content: "❌ Failed to weave the Lineage Mural." });
     }
 }
 
-async function handleExploreVariations(interaction, originalInteractionId, imageIndex) {
+async function handleExploreVariations(interaction, originalInteractionId, imageIndex, ctx) {
+    const { logger: ctxLogger = logger } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
     if (!generationData) return interaction.editReply({ content: '❌ Data not found.' });
@@ -273,7 +283,7 @@ async function handleExploreVariations(interaction, originalInteractionId, image
 
     try {
         const strengths = [0.5, 0.65, 0.8, 0.95];
-        const results = await Promise.all(strengths.map(s => generateRemix(generationData, imageIndex, "Refine and enhance this concept with varying degrees of creativity", userProfile.uid, interaction, { strength: s })));
+        const results = await Promise.all(strengths.map(s => generateRemix(generationData, imageIndex, "Refine and enhance this concept with varying degrees of creativity", userProfile.uid, interaction, { strength: s, ...ctx })));
 
         await interaction.editReply({ content: '🪄 **Stitching Astral Variations...**' });
 
@@ -295,7 +305,7 @@ async function handleExploreVariations(interaction, originalInteractionId, image
         });
 
     } catch (e) {
-        logger.error(`Variation Grid failed`, e);
+        ctxLogger.error(`Variation Grid failed`, e);
         await interaction.editReply({ content: `❌ **Variation Neighborhood Failed:** ${e.message}` });
     }
 }
@@ -320,7 +330,8 @@ async function handleLockStyle(interaction, originalInteractionId, imageIndex) {
     });
 }
 
-async function handleGeniusSuggestions(interaction, originalInteractionId, imageIndex) {
+async function handleGeniusSuggestions(interaction, originalInteractionId, imageIndex, ctx) {
+    const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
     
@@ -340,7 +351,8 @@ async function handleGeniusSuggestions(interaction, originalInteractionId, image
                     instructions: "suggest 3 distinct and creative one-sentence remix directions for this image. return ONLY a JSON array of strings like ['direction1', 'direction2', 'direction3']"
                 }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal
         }, 15000);
 
         const { result } = await response.json();
@@ -351,7 +363,7 @@ async function handleGeniusSuggestions(interaction, originalInteractionId, image
             const cleanResult = result.prompt.replace(/```json|```/g, '').trim();
             suggestions = JSON.parse(cleanResult);
         } catch (e) {
-            logger.warn("Failed to parse Genius suggestions, using fallback", e);
+            ctxLogger.warn("Failed to parse Genius suggestions, using fallback", e);
         }
 
         const embed = new EmbedBuilder()
@@ -372,12 +384,13 @@ async function handleGeniusSuggestions(interaction, originalInteractionId, image
         await interaction.editReply({ embeds: [embed], components: [row] });
 
     } catch (e) {
-        logger.error("Genius failed", e);
+        ctxLogger.error("Genius failed", e);
         await interaction.editReply({ content: "❌ Failed to consult the Genius." });
     }
 }
 
-async function handleViewParent(interaction, originalInteractionId, imageIndex) {
+async function handleViewParent(interaction, originalInteractionId, imageIndex, ctx) {
+    const { logger: ctxLogger = logger, signal } = ctx;
     await interaction.deferReply({ ephemeral: true });
     const generationData = await getGeneration(originalInteractionId);
     const parentImageId = generationData.parentImageId;
@@ -396,7 +409,8 @@ async function handleViewParent(interaction, originalInteractionId, imageIndex) 
             body: JSON.stringify({
                 data: { action: "getImageDetail", imageId: parentImageId }
             }),
-            agent: keepAliveAgent
+            agent: keepAliveAgent,
+            signal
         }, 10000);
 
         const { result } = await response.json();
@@ -408,6 +422,7 @@ async function handleViewParent(interaction, originalInteractionId, imageIndex) 
 
         await interaction.editReply({ embeds: [embed] });
     } catch (e) {
+        ctxLogger.error("View Parent failed", e);
         await interaction.editReply({ content: "❌ Could not retrieve parent data." });
     }
 }
@@ -437,6 +452,7 @@ async function handleShowRemixModal(interaction, originalInteractionId, imageInd
 
 // Shared helper for single vibe remix
 async function handleRemixProcess(interaction, originalInteractionId, imageIndex, instructions, options = {}) {
+    const { logger: ctxLogger = logger, signal } = options;
     if (interaction.isButton()) await interaction.deferReply({ ephemeral: true });
     else if (interaction.isModalSubmit()) await interaction.deferReply({ ephemeral: true });
 
@@ -461,7 +477,7 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     });
 
     if (!isSafe) {
-        logger.warn(`Unsafe remix instruction rejected`, { discordId: interaction.user.id, instructions });
+        ctxLogger.warn(`Unsafe remix instruction rejected`, { instructions });
         return interaction.editReply({ content: Hive.Voice.safety });
     }
 
@@ -471,7 +487,9 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
         const result = await generateRemix(generationData, imageIndex, instructions, userProfile.uid, interaction, {
             strength: options.strength || 0.75,
             focus,
-            styleMimic
+            styleMimic,
+            logger: ctxLogger,
+            signal
         });
         
         await interaction.editReply({ content: '🪄 **Weaving the Soul...** Merging your instructions with the new vision.' });
@@ -479,8 +497,8 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
         // Generate Lore and Insight in parallel
         const [comparisonBuffer, insight, lore] = await Promise.all([
             stitchSideBySide(result.originalBuffer, result.buffer),
-            getAlchemistInsight(result.prompt, instructions),
-            getLoreFragment(result.prompt)
+            getAlchemistInsight(result.prompt, instructions, ctxLogger, signal),
+            getLoreFragment(result.prompt, ctxLogger, signal)
         ]);
 
         await interaction.editReply({ content: '✨ **Finalizing Transmutation...**' });
@@ -510,7 +528,7 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
         });
 
     } catch (e) {
-        logger.error(`Remix failed`, e);
+        ctxLogger.error(`Remix failed`, e);
         await interaction.editReply({ content: `❌ **Remix Failed:** ${e.message}` });
     }
 }
@@ -618,18 +636,17 @@ async function handleEliteVibeGrid(interaction, originalInteractionId, imageInde
 
 // Core remix generation logic with lineage tracking
 async function generateRemix(generationData, imageIndex, instructions, uid, interaction, options = {}) {
-    const { strength = 0.75, focus = 'all', styleMimic = null } = typeof options === 'object' ? options : { strength: options };
+    const { strength = 0.75, focus = 'all', styleMimic = null, logger: ctxLogger = logger, signal } = typeof options === 'object' ? options : { strength: options };
     
     const API_URL = process.env.DREAMBEES_API_URL;
     const API_KEY = process.env.DREAMBEES_API_KEY;
     const originalImageUrl = generationData.urls[imageIndex];
     const parentImageId = generationData.imageIds[imageIndex];
     const rootImageId = generationData.rootImageId || parentImageId;
-    // Standardize to Shadow ID if not already a UUID
     const targetUserId = uid?.includes(':') ? uid : `discord:${uid}`;
 
     // Fetch original image buffer early for comparison
-    const originalRes = await fetchWithTimeout(originalImageUrl, { agent: keepAliveAgent }, 15000);
+    const originalRes = await fetchWithTimeout(originalImageUrl, { agent: keepAliveAgent, signal }, 15000);
     const originalBuffer = Buffer.from(await originalRes.arrayBuffer());
 
     // 1. AI Merge with Surgical Instructions
@@ -657,7 +674,8 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
                 instructions: wrapInAegis(`${focusInstruction} ${styleInstruction} Instructions: ${instructions}`.trim())
             }
         }),
-        agent: keepAliveAgent
+        agent: keepAliveAgent,
+        signal
     }, 15000);
 
     const { result: transformResult } = await transformResponse.json();
@@ -688,32 +706,51 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
                 }
             }
         }),
-        agent: keepAliveAgent
+        agent: keepAliveAgent,
+        signal
     }, 30000);
 
     const { result: submitResult } = await submitResponse.json();
     const requestId = submitResult?.requestId;
     if (!requestId) throw new Error("Backend did not return a requestId.");
 
-    // 3. Poll Firestore
+    // 3. Poll Firestore with lifecycle-aware safety
     const queueRef = db.collection('generation_queue').doc(requestId);
     const generationResult = await new Promise((resolve, reject) => {
-        const unsubscribe = queueRef.onSnapshot(async (snapshot) => {
+        let isSettled = false;
+        let unsubscribe;
+
+        const settle = (callback, value) => {
+            if (isSettled) return;
+            isSettled = true;
+            if (unsubscribe) unsubscribe();
+            callback(value);
+        };
+
+        const onAbort = () => settle(reject, new Error("Generation cancelled by user or system shutdown."));
+        if (signal) {
+            if (signal.aborted) return onAbort();
+            signal.addEventListener('abort', onAbort);
+        }
+
+        unsubscribe = queueRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (!data) return;
             if (data.status === 'completed' && data.imageUrl) {
-                unsubscribe();
-                resolve({ imageUrl: data.imageUrl, imageId: data.resultImageId });
+                settle(resolve, { imageUrl: data.imageUrl, imageId: data.resultImageId });
             } else if (data.status === 'failed') {
-                unsubscribe();
-                reject(new Error(`Remix failed`));
+                settle(reject, new Error(data.error || "Generation failed in backend"));
             }
+        }, (err) => {
+            settle(reject, err);
         });
-        setTimeout(() => { unsubscribe(); reject(new Error("Timeout")); }, 120000);
+
+        // Hard Timeout (2 minutes)
+        setTimeout(() => settle(reject, new Error("Generation timed out after 2 minutes of silence.")), 120000);
     });
 
     // 4. Fetch final image
-    const imgRes = await fetchWithTimeout(generationResult.imageUrl, { agent: keepAliveAgent }, 30000);
+    const imgRes = await fetchWithTimeout(generationResult.imageUrl, { agent: keepAliveAgent, signal }, 30000);
     const buffer = Buffer.from(await imgRes.arrayBuffer());
 
     // 5. Save locally with lineage

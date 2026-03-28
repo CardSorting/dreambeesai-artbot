@@ -60,3 +60,4 @@ deploy/
 infra/
 cloudbuild.yaml
 .gcloud/
+scripts/deploy-gce.sh

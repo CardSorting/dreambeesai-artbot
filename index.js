@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
 import * as Hive from './lib/hive.js';
-import { db } from './lib/firebase.js';
+import { db, verifyConnectivity } from './lib/firebase.js';
 import { cleanupStaleLocks } from './lib/db/locks.js';
 import { recoverZombieTransactions } from './lib/db/recovery.js';
 import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
@@ -27,18 +27,38 @@ const __dirname = path.dirname(__filename);
 
 
 function startHeartbeat(activeJobs) {
+    logger.info('Starting production heartbeat monitor...');
     setInterval(() => {
         const memory = process.memoryUsage();
         const uptime = process.uptime();
-        logger.info('Bot Heartbeat', {
+        const heapUsedMb = Math.round(memory.heapUsed / 1024 / 1024);
+        
+        logger.info('[Heartbeat] System Health', {
             activeJobs: activeJobs.size,
             uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
             rss: `${Math.round(memory.rss / 1024 / 1024)}MB`,
-            heapUsed: `${Math.round(memory.heapUsed / 1024 / 1024)}MB`,
-            external: `${Math.round(memory.external / 1024 / 1024)}MB`
+            heapUsed: `${heapUsedMb}MB`,
+            external: `${Math.round(memory.external / 1024 / 1024)}MB`,
+            cpu: process.cpuUsage()
         });
+
+        // RESOURCE GUARD: Warn if memory is dangerously high (> 1GB)
+        if (heapUsedMb > 1024) {
+            logger.warn('HIGH_MEMORY_USAGE_DETECTED', { heapUsedMb });
+        }
     }, 15 * 60 * 1000); // Every 15 minutes
 }
+
+// --- GLOBAL PROCESS HARDENING ---
+process.on('unhandledRejection', (reason, promise) => {
+    logger.error('[CRITICAL] Unhandled Promise Rejection', reason, { promise });
+});
+
+process.on('uncaughtException', (err) => {
+    logger.error('[FATAL] Uncaught Exception - SHUTTING DOWN', err);
+    process.exit(1);
+});
+// --------------------------------
 
 const client = new Client({
     intents: [
@@ -296,7 +316,12 @@ client.on('interactionCreate', async interaction => {
 if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.meta.url === `file://${process.argv[1]}`) {
     logger.warn("Missing DISCORD_TOKEN or DISCORD_CLIENT_ID in .env file. Bot cannot start.");
 } else if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV === 'production') {
-    validateConfig();
+    const isHealthy = await verifyConnectivity();
+    if (!isHealthy) {
+        logger.error("FATAL: Database connectivity check failed on startup. Exiting.");
+        process.exit(1);
+    }
+
     startHeartbeat(activeJobs);
 
     // Robust HTTP Server for Cloud Run Health Checks

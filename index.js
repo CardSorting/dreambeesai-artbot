@@ -215,28 +215,34 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
             const isApiHealthy = !isCircuitOpen();
             
-            // Lightweight DB Check (only if client is ready)
+            // Non-blocking DB Check with timeout
             let isDbHealthy = true;
             if (client.isReady()) {
-                try {
-                    // Check if we can at least reach the collection shim
+                const dbCheckPromise = (async () => {
                     const healthRef = db.collection('_health').doc('probe');
-                    if (!healthRef) isDbHealthy = false;
-                } catch (e) {
-                    isDbHealthy = false;
-                }
+                    return !!healthRef;
+                })();
+
+                const timeoutPromise = new Promise(r => setTimeout(() => r('TIMEOUT'), 5000));
+                const result = await Promise.race([dbCheckPromise, timeoutPromise]);
+                if (result === 'TIMEOUT') isDbHealthy = false;
+                else isDbHealthy = !!result;
             }
 
             const isHealthy = isClientReady && isApiHealthy && isDbHealthy;
 
             if (isHealthy) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'UP', dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' } }));
+                res.end(JSON.stringify({ 
+                    status: 'UP', 
+                    memory: process.memoryUsage().rss,
+                    dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' } 
+                }));
             } else {
                 res.writeHead(503, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     status: 'DOWN', 
-                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : 'Database Error'),
+                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : 'Database Timeout/Error'),
                     dependencies: { 
                         discord: isClientReady ? 'OK' : 'ERR', 
                         api: isApiHealthy ? 'OK' : 'ERR', 
@@ -271,16 +277,16 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
 
     // Graceful Shutdown
     const shutdown = async (signal) => {
-        logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 30s)...`);
+        logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 60s)...`);
         
-        // Stop taking new interactions if possible (Discord.js doesn't have a direct 'pause' but we can flag it)
+        // Stop taking new interactions
         client.user?.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });
 
         let waitAttempts = 0;
-        while (activeJobs.size > 0 && waitAttempts < 30) {
+        while (activeJobs.size > 0 && waitAttempts < 60) {
             await new Promise(r => setTimeout(r, 1000));
             waitAttempts++;
-            if (waitAttempts % 5 === 0) logger.info(`Still waiting for ${activeJobs.size} jobs...`);
+            if (waitAttempts % 10 === 0) logger.info(`Still waiting for ${activeJobs.size} jobs to drain...`);
         }
 
         if (activeJobs.size > 0) {

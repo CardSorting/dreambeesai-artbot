@@ -1,5 +1,5 @@
 #!/bin/bash
-# 🐝 DreamBees Hive Node: GCE Deployment Script (v1.5 - Industrial Hardened)
+# 🐝 DreamBees Hive Node: Unified Pipeline Trigger (v1.7)
 set -e
 
 # --- FLAGS ---
@@ -15,120 +15,40 @@ done
 PROJECT_ID="dreambees-alchemist"
 ZONE="us-central1-a"
 REGION="us-central1"
-INSTANCE_NAME="dreambees-hive-node" # Persistent "Always On" instance name
+INSTANCE_NAME="dreambees-hive-node"
 SERVICE_NAME="dreambees-discord-bot"
 REPO_NAME="dreambees-bot-repo"
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:latest"
 
-# --- MACHINE SPECIFICATIONS ---
-MACHINE_TYPE="e2-small" # 2 vCPU, 2GB RAM (Balanced for Sharp image processing)
-DISK_SIZE="20GB"
-
 # --- SECRETS & ENVIRONMENT ---
 if [ -f .env ]; then
-    echo "🔑 Loading secrets from local .env..."
-    # Exporting to shell so they can be passed as env-vars to gcloud
+    echo "🔑 Loading mission-critical secrets..."
     export $(grep -v '^#' .env | xargs)
 else
-    echo "❌ Error: .env file not found. Deployment requires valid credentials."
+    echo "❌ Error: .env file not found."
     exit 1
 fi
 
-# --- ENVIRONMENT CONSOLIDATION ---
-# Shared environment string for both 'create' and 'update' commands
-# This ensures that both new and existing instances receive the same mission-critical configuration.
+# Consolidate env vars for injection into Cloud Build
 ENV_VARS="NODE_ENV=production,DREAMBEES_API_URL=${DREAMBEES_API_URL},DREAMBEES_API_KEY=${DREAMBEES_API_KEY},DISCORD_TOKEN=${DISCORD_TOKEN},DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID},FIREBASE_API_KEY=${FIREBASE_API_KEY},FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN},FIREBASE_AUTH_EMAIL=${FIREBASE_AUTH_EMAIL},FIREBASE_AUTH_PASSWORD=${FIREBASE_AUTH_PASSWORD},B2_ENDPOINT=${B2_ENDPOINT},B2_REGION=${B2_REGION},B2_BUCKET=${B2_BUCKET},B2_KEY_ID=${B2_KEY_ID},B2_APP_KEY=${B2_APP_KEY},B2_PUBLIC_URL=${B2_PUBLIC_URL},OPENROUTER_API_KEY=${OPENROUTER_API_KEY},CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID},CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN},GOOGLE_API_KEY=${GOOGLE_API_KEY},WEBAPP_URL=${WEBAPP_URL},DREAMBEES_GUILD_ID=${DREAMBEES_GUILD_ID},GCLOUD_PROJECT=${PROJECT_ID},CLOUD_TASKS_LOCATION=${CLOUD_TASKS_LOCATION},CLOUD_TASKS_QUEUE=${CLOUD_TASKS_QUEUE},CLOUD_TASKS_SA_EMAIL=${CLOUD_TASKS_SA_EMAIL},TASK_WEBHOOK_URL=${TASK_WEBHOOK_URL},PORT=8080"
 
-# --- PRE-DEPLOYMENT VALIDATION ---
-echo "🧐 Verifying local configuration before build..."
-if ! npm run verify; then
-    echo "❌ Error: Configuration verification failed. Fix your .env or configuration before pushing to production."
-    exit 1
-fi
-
-if [ "$SKIP_LINT" = false ]; then
-    echo "🧹 Running lint check..."
-    if ! npm run lint; then
-        echo "❌ Error: Linting failed. Fix your code style or use --skip-lint to bypass (hotfixes only)."
-        exit 1
-    fi
-fi
-
-echo "🚀 Starting INDUSTRIAL-GRADE Deployment for ${INSTANCE_NAME} to ${ZONE}..."
+echo "🚀 Triggering UNIFIED PIPELINE (v1.7) for ${INSTANCE_NAME}..."
 
 # 1. Project Alignment
-echo "🛰️ Aligning project to ${PROJECT_ID}..."
-gcloud config set project ${PROJECT_ID}
+gcloud config set project ${PROJECT_ID} &>/dev/null
 
-# 2. Firewall Automation (Active Verification)
-echo "🛡️ Ensuring Hive firewall is open on Port 8080..."
-if ! gcloud compute firewall-rules describe allow-hive-8080 &>/dev/null; then
-    gcloud compute firewall-rules create allow-hive-8080 \
-        --allow=tcp:8080 \
-        --target-tags=http-server \
-        --description="Allow Hive Node health checks and Cloud Task webhooks"
-fi
-
-# 3. API Enablement
-echo "📡 Verifying Google Cloud APIs..."
-gcloud services enable \
-    compute.googleapis.com \
-    artifactregistry.googleapis.com \
-    cloudbuild.googleapis.com
-
-# 4. Artifact Registry Clean-up (Extreme Hardening)
-echo "📦 Pruning obsolete container images..."
-# Keeps only the last 3 tags to save costs and avoid confusion
-gcloud artifacts docker images list ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME} \
-    --sort-by="~CREATE_TIME" --format="get(digest)" --limit=999 | tail -n +4 | \
-    xargs -I {} gcloud artifacts docker images delete ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}@{} --quiet || true
-
-# 5. Artifact Registry Management
-if ! gcloud artifacts repositories describe ${REPO_NAME} --location=${REGION} &>/dev/null; then
-    echo "Creating repository ${REPO_NAME}..."
-    gcloud artifacts repositories create ${REPO_NAME} \
-        --repository-format=docker \
-        --location=${REGION} \
-        --description="Docker repository for DreamBees Discord Bot"
-fi
-
-# 6. High-Performance Build via Cloud Build (v2.0)
-echo "🏗️ Building hardened container image via Cloud Build (Accelerated)..."
+# 2. Trigger Cloud Build Orchestration
+# The build manifest now handles: Parallel Pre-checks, Kaniko Build, 
+# Security Scanning, Pruning, and Final GCE Deployment.
 GIT_SHA=$(git rev-parse --short HEAD || echo "uncommitted")
+
 gcloud builds submit --config=cloudbuild.yaml \
-    --substitutions=_IMAGE_NAME=${IMAGE_NAME},_VERSION=${GIT_SHA}
-
-# 7. GCE Deployment (Industrial Hardened with Read-Only Root FS support)
-echo "🚢 Deploying to Compute Engine (${MACHINE_TYPE} @ ${ZONE})..."
-
-# Check if instance already exists
-if gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} &>/dev/null; then
-    echo "🔄 Instance exists. Updating to Industrial-Grade container..."
-    gcloud compute instances update-container ${INSTANCE_NAME} \
-        --zone=${ZONE} \
-        --container-image=${IMAGE_NAME} \
-        --remove-container-env=NODE_ENV,FIREBASE_SERVICE_ACCOUNT_JSON \
-        --container-env=${ENV_VARS} \
-        --container-mount-tmpfs=mount-path=/tmp \
-        --container-privileged=false
-else
-    echo "🆕 Creating new 'Industrial-Grade' instance..."
-    gcloud compute instances create-with-container ${INSTANCE_NAME} \
-        --zone=${ZONE} \
-        --machine-type=${MACHINE_TYPE} \
-        --boot-disk-size=${DISK_SIZE} \
-        --boot-disk-type=pd-balanced \
-        --container-image=${IMAGE_NAME} \
-        --container-restart-policy=always \
-        --tags=http-server,https-server \
-        --labels=managed-by=antigravity,env=production,app=dreambees,hardened=v1-5 \
-        --container-env=${ENV_VARS} \
-        --container-mount-tmpfs=mount-path=/tmp \
-        --container-privileged=false
-fi
+    --substitutions="_IMAGE_NAME=${IMAGE_NAME},_VERSION=${GIT_SHA},_ENV_VARS=${ENV_VARS},_INSTANCE_NAME=${INSTANCE_NAME},_ZONE=${ZONE},_DREAMBEES_API_URL=${DREAMBEES_API_URL},_DREAMBEES_API_KEY=${DREAMBEES_API_KEY},_DISCORD_TOKEN=${DISCORD_TOKEN},_FIREBASE_API_KEY=${FIREBASE_API_KEY}"
 
 # --- ACTIVE VERIFICATION (SMOKE TEST) ---
-echo "🩺 Verifying deployment success..."
+# We keep the smoke test in the shell script to verify the Node entrypoint 
+# successfully settled after the Cloud Build finished.
+echo "🩺 Initiating post-pipeline Smoke Test..."
 EXTERNAL_IP=$(gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
 
 if [ -z "$EXTERNAL_IP" ]; then
@@ -146,7 +66,7 @@ else
         HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_CHECK_URL" || echo "000")
         
         if [ "$HTTP_RESPONSE" == "200" ]; then
-            echo "✅ SMOKE TEST PASSED: Hive Node reports UP and Mission-Ready!"
+            echo "✅ SMOKE TEST PASSED: Hive Node v${GIT_SHA} is mission-ready!"
             break
         else
             echo "⏳ Still initializing (Status: $HTTP_RESPONSE)..."
@@ -158,14 +78,10 @@ else
     if [ "$HTTP_RESPONSE" != "200" ]; then
         echo "❌ SMOKE TEST FAILED: Hive Node did not report UP in time."
         echo "🧐 Initiating Failure Forensics..."
-        echo "--------------------------------------------------------"
         gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE} --start=0 | tail -n 50
-        echo "--------------------------------------------------------"
-        echo "⚠️ Check the logs above for runtime errors or missing configuration."
         exit 1
     fi
 fi
 
-echo "✅ HIVE NODE DEPLOYED: The DreamBees Discord Bot is now 'Always-On' and 'Industrial-Hardened'!"
-echo "📡 Diagnostics: gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE}"
+echo "✅ HIVE NODE DEPLOYED: Unified Lifecycle complete."
 echo "📝 Cloud Logging: https://console.cloud.google.com/logs/query;query=resource.type%3D%22gce_instance%22%0Aresource.labels.instance_id%3D%22${INSTANCE_NAME}%22?project=${PROJECT_ID}"

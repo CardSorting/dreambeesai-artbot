@@ -29,7 +29,13 @@ export async function execute(interaction) {
     const prompt = Hive.refineNectar(originalPrompt);
 
     // 1. Safety Checks (Queen's Guard)
-    if (!Hive.guardHive(prompt)) {
+    const isSafe = await Hive.guardHive(prompt, { 
+        userId: interaction.user.id, 
+        userTag: interaction.user.tag, 
+        guildId: interaction.guildId 
+    });
+
+    if (!isSafe) {
         logger.warn(`Unsafe prompt rejected`, { discordId, discordTag, originalPrompt });
         return interaction.reply({ content: Hive.Voice.safety, ephemeral: true });
     }

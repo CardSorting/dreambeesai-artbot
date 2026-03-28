@@ -6,6 +6,7 @@ import { uploadToS3 } from '../lib/s3.js';
 import { Wallet } from '../lib/wallet.js';
 import * as Hive from '../lib/hive.js';
 import { CONFIG } from '../lib/config-check.js';
+import { wrapInAegis } from '../lib/safety-utils.js';
 
 const VIBE_INSTRUCTIONS = {
     cyberpunk: "apply a cyberpunk aesthetic with neon lights, futuristic cityscape elements, and a high-tech atmosphere",
@@ -151,7 +152,19 @@ async function handleShowMatchModal(interaction, originalInteractionId, imageInd
 async function handleGenerateMatchProcess(interaction, originalInteractionId, imageIndex, instructions) {
     await interaction.deferReply({ ephemeral: true });
     
-    // Fix collection name and use centralized profile
+    // 1. Safety Guard
+    const isSafe = await Hive.guardHive(instructions, { 
+        userId: interaction.user.id, 
+        userTag: interaction.user.tag, 
+        guildId: interaction.guildId 
+    });
+
+    if (!isSafe) {
+        logger.warn(`Unsafe match instruction rejected`, { discordId: interaction.user.id, instructions });
+        return interaction.editReply({ content: Hive.Voice.safety });
+    }
+
+    // 2. Fetch User Profile
     const userProfile = await getUserByDiscordId(interaction.user.id);
     if (!userProfile) return interaction.editReply({ content: '❌ Account linking required.' });
     
@@ -440,6 +453,18 @@ async function handleRemixProcess(interaction, originalInteractionId, imageIndex
     const userDoc = await db.collection('users').doc(interaction.user.id).get();
     const styleMimic = userDoc.data()?.currentStyleMimic;
 
+    // 1. Safety Guard
+    const isSafe = await Hive.guardHive(instructions, { 
+        userId: interaction.user.id, 
+        userTag: interaction.user.tag, 
+        guildId: interaction.guildId 
+    });
+
+    if (!isSafe) {
+        logger.warn(`Unsafe remix instruction rejected`, { discordId: interaction.user.id, instructions });
+        return interaction.editReply({ content: Hive.Voice.safety });
+    }
+
     await interaction.editReply({ content: '🧪 **Extracting Essence...** Dissolving the original image into astral data.' });
 
     try {
@@ -629,7 +654,7 @@ async function generateRemix(generationData, imageIndex, instructions, uid, inte
                 prompt: generationData.prompt,
                 styleName: "Masterpiece",
                 intensity: "high",
-                instructions: `${focusInstruction} ${styleInstruction} Instructions: ${instructions}`.trim()
+                instructions: wrapInAegis(`${focusInstruction} ${styleInstruction} Instructions: ${instructions}`.trim())
             }
         }),
         agent: keepAliveAgent

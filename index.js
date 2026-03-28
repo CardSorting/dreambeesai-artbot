@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
+import * as Hive from './lib/hive.js';
 import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db } from './lib/db.js';
 import { ThreadedInteraction } from './lib/discord-ux.js';
 
@@ -166,7 +167,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
 
                     return await command.execute(threadedInteraction);
                 } catch (e) {
-                    logger.error("Failed to create seamless thread", e);
+                    interactionLogger.error("Failed to create seamless thread", { error: e.message, stack: e.stack });
                     return await interaction.reply({ 
                         content: '❌ **Threads Only!** Please create a thread to start creating! (Automatic thread creation failed)', 
                         ephemeral: true 
@@ -185,9 +186,14 @@ export async function handleInteraction(interaction, client, activeJobs) {
             }
         }
     } catch (error) {
-        interactionLogger.error(`Unhandled interaction error`, error);
+        interactionLogger.error(`Unhandled interaction error`, {
+            error: error.message,
+            stack: error.stack,
+            customId: interaction.customId,
+            commandName: interaction.commandName
+        });
         
-        const errorMessage = { content: '❌ **Bot Error:** Something went wrong while processing your request. Please try again later.', ephemeral: true };
+        const errorMessage = { content: Hive.Voice.failure, ephemeral: true };
         if (interaction.replied || interaction.deferred) {
             await interaction.editReply(errorMessage).catch(() => {});
         } else {

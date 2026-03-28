@@ -7,6 +7,10 @@ typings/
 .env
 .env.*
 !.env.example
+serviceAccountKey.json
+google-cloud-key.json
+firebase-credentials.json
+.gcloud/
 
 # OS-specific files
 .DS_Store

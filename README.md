@@ -146,30 +146,36 @@ $$ R(\tau) = B + \min((\tau - 1) \cdot \beta, M) $$
 | $\tau$ | **Streak Interval**: The number of contiguous successful claims. | $1, n \dots$ |
 
 #### 🕒 Temporal Constraint (The 48h Window)
-The streak state $\tau$ at interval $n+1$ is modeled as a discrete state transition governed by the **Window of Opportunity ($\mathcal{W}$)**. This window defines the set of valid timestamps $\mathcal{T}$ for a continuous claim event:
+The streak state $\tau$ at interval $n+1$ is modeled as a discrete state transition governed by the **Theorem of Continuity ($\Theta$)**. This theorem defines the valid temporal boundaries $\Delta t = t_{n+1} - t_n$ for which a streak remains monotonic.
 
-$$ \mathcal{W} = \{ t \mid \text{last\_claim} + 24\text{h} \le t \le \text{last\_claim} + 48\text{h} \} $$
+$$ \Theta = \{ (t_n, t_{n+1}) \mid \Delta t \in [24\text{h}, 48\text{h}] \} $$
 
-- **Grace Period (Retention Mechanic)**: The **48-hour upper bound** is a deliberate "Grace Period" designed as a psychological buffer for user retention. It provides flexibility for real-world user availability while maintaining the 24-hour periodic engagement target.
-- **Monotonicity & Synchronization**: To ensure state integrity, $\Delta t$ is calculated using the **Firestore `serverTimestamp()`**. This provides a monotonic, server-side source of truth that is immune to local machine clock manipulation and timezone exploits.
-- **Atomic Gating**: The 24-hour lower bound is enforced by a deterministic UTC identifier (`claim_YYYY_MM_DD`), ensuring only one state increment $\tau \to \tau+1$ is possible per universal day.
+**Transition Function ($F$):**
+The system's state machine mapping $F(s_n, t_{n+1})$ defines the behavioral outcomes for each interaction:
+$$ F(s_n, t_{n+1}) = \begin{cases} \text{Continuous}(\tau_n + 1) & \text{if } \Delta t \in \Theta \\ \text{Reset}(1) & \text{if } \Delta t > 48\text{h} \\ \text{Blocked} & \text{if } \Delta t < 24\text{h} \end{cases} $$
+
+- **Grace Period (Incentive Physics)**: The **48-hour upper bound** is a deliberate "Grace Period" designed as a psychological buffer for user retention. It provides flexibility for real-world user availability while maintaining the 24-hour periodic engagement target.
+- **Monotonicity & Architectural Integrity**: To ensure state integrity, $\Delta t$ is calculated using the **Firestore `serverTimestamp()`**. This provides a monotonic, server-side source of truth that is immune to local machine clock manipulation and timezone exploits.
+- **Stratified Time Segments**: The 24-hour lower bound is enforced by a deterministic UTC identifier (`claim-YYYY-MM-DD`), ensuring only one state increment $\tau \to \tau+1$ is possible per universal day.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle: Initial State
-    Idle --> Pending_Claim: /claim Interaction
+    Idle --> PendingSelection: /claim Interaction
     
-    state Pending_Claim {
-        [*] --> Check_Interval
-        Check_Interval --> Within_Window: Δt <= 48h
-        Check_Interval --> Window_Expired: Δt > 48h
+    state PendingSelection {
+        [*] --> CheckInterval: Δt calculation
+        CheckInterval --> WithinWindow: Δt ∈ [24h, 48h]
+        CheckInterval --> WindowExpired: Δt > 48h
+        CheckInterval --> Blocked: Δt < 24h
     }
 
-    Within_Window --> Active_Streak: Update τ+1
-    Window_Expired --> Terminal_Reset: Reset τ=1
+    WithinWindow --> ActiveStreak: Update τ+1 (Commit)
+    WindowExpired --> TerminalReset: Reset τ=1 (Commit)
+    Blocked --> Idle: Exception(Error JAR)
     
-    Active_Streak --> Idle: Sync Success
-    Terminal_Reset --> Idle: Sync Success
+    ActiveStreak --> Idle: Sync Success
+    TerminalReset --> Idle: Sync Success
 ```
 
 ---

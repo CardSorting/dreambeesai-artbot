@@ -1,29 +1,31 @@
-# --- STAGE 1: Dependency Builder ---
+# --- STAGE 1: Dependency & Native Builder ---
 FROM node:20-bookworm-slim AS builder
 
-# Install build dependencies for native modules and tini
+# Combine apt install and cleanup to reduce layer size
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
-    tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy only package files for optimal layer caching
+# [LAYER CACHING] Copy only package files first
 COPY package*.json ./
 
 # Install ALL dependencies (including dev for building)
 RUN npm ci
 
-# Copy source code
+# Copy the rest of the application
 COPY . .
 
-# --- STAGE 2: Production Runtime ---
+# [OPTIMIZATION] Prune devDependencies before copying to production stage
+RUN npm prune --production
+
+# --- STAGE 2: High-Performance Production Runtime ---
 FROM node:20-bookworm-slim
 
-# Bring tini from the builder/system to ensure correct signal handling (SIGTERM)
+# Install tini (Signal handling) and cleanup in one step
 RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -31,21 +33,19 @@ WORKDIR /app
 # Set production environment
 ENV NODE_ENV=production
 
-# Copy only production dependencies and prebuilt binaries (Sharp) 
-# from the builder stage
+# [SPEED] Copy the pre-built, pruned node_modules from builder
+# This skips running npm in the production stage entirely
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
-RUN npm ci --only=production && npm cache clean --force
-
-# Copy the rest of the application
 COPY --from=builder /app ./
 
-# Use Tini as the entrypoint to handle signal forwarding (PID 1 problem)
+# Use Tini as the entrypoint to handle signal forwarding (PID 1)
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Set the primary command
 CMD ["node", "index.js"]
 
-# Security: Use a non-root user
+# Security: Use non-root user
 USER node
 
 # Health check port

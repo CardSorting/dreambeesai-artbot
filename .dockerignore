@@ -5,6 +5,7 @@ npm-debug.log
 .git
 .gitignore
 .dockerignore
+.gcloudignore
 tests
 *.md
 LICENSE
@@ -13,3 +14,9 @@ eslint.config.js
 serviceAccountKey.json
 scripts/*.sh
 docs
+.DS_Store
+.cache
+test_*.js
+*.png
+*.jpg
+*.jpeg

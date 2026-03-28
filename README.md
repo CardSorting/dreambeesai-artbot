@@ -146,9 +146,31 @@ $$ R(\tau) = B + \min((\tau - 1) \cdot \beta, M) $$
 | $\tau$ | **Streak Interval**: The number of contiguous successful claims. | $1, n \dots$ |
 
 #### 🕒 Temporal Constraint (The 48h Window)
-A streak $\tau$ is maintained if the interval $T$ between claim $n$ and $n+1$ satisfies:
-$$ T \le 48 \text{ hours} $$
-Failure to claim within this window triggers a state reset to $\tau = 1$.
+The streak state $\tau$ at interval $n+1$ is modeled as a discrete state transition governed by the **Window of Opportunity ($\mathcal{W}$)**. This window defines the set of valid timestamps $\mathcal{T}$ for a continuous claim event:
+
+$$ \mathcal{W} = \{ t \mid \text{last\_claim} + 24\text{h} \le t \le \text{last\_claim} + 48\text{h} \} $$
+
+- **Grace Period (Retention Mechanic)**: The **48-hour upper bound** is a deliberate "Grace Period" designed as a psychological buffer for user retention. It provides flexibility for real-world user availability while maintaining the 24-hour periodic engagement target.
+- **Monotonicity & Synchronization**: To ensure state integrity, $\Delta t$ is calculated using the **Firestore `serverTimestamp()`**. This provides a monotonic, server-side source of truth that is immune to local machine clock manipulation and timezone exploits.
+- **Atomic Gating**: The 24-hour lower bound is enforced by a deterministic UTC identifier (`claim_YYYY_MM_DD`), ensuring only one state increment $\tau \to \tau+1$ is possible per universal day.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: Initial State
+    Idle --> Pending_Claim: /claim Interaction
+    
+    state Pending_Claim {
+        [*] --> Check_Interval
+        Check_Interval --> Within_Window: Δt <= 48h
+        Check_Interval --> Window_Expired: Δt > 48h
+    }
+
+    Within_Window --> Active_Streak: Update τ+1
+    Window_Expired --> Terminal_Reset: Reset τ=1
+    
+    Active_Streak --> Idle: Sync Success
+    Terminal_Reset --> Idle: Sync Success
+```
 
 ---
 

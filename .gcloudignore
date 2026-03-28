@@ -1,0 +1,35 @@
+# .gcloudignore
+# This file specifies files that should not be uploaded to Google Cloud Build.
+# We override some .gitignore rules to ensure Dockerfile and other build artifacts are included.
+
+.git/
+.gitignore
+node_modules/
+.vscode/
+.idea/
+.DS_Store
+
+# Explicitly INCLUDE these (negating potential .gitignore rules)
+# Note: In .gcloudignore, if a file is in .gitignore, it's ignored unless we create this file.
+# If we create this file, it REPLACES the default .gitignore behavior for gcloud.
+
+# Standard excludes
+*.log
+npm-debug.log*
+
+# Do NOT ignore the Dockerfile or the code
+!Dockerfile
+!package.json
+!package-lock.json
+!index.js
+!lib/
+!assets/
+!.env # We need .env if the build process uses it, but in our case the ENV vars are passed via gcloud.
+# Actually, the script exports them from .env and passes them to gcloud.
+# But does the container build need .env? Usually not if they're passed as env-vars to the runtime.
+# However, the script says:
+#   if [ -f .env ]; then export $(grep -v '^#' .env | xargs); fi
+# And then it passes them to `gcloud compute instances update-container`.
+# Cloud Build DOES NOT need .env because it just builds the image.
+
+# Let's keep it simple: exclude common junk and match what's needed for the build.

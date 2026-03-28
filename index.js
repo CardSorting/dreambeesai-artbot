@@ -188,7 +188,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
                                 });
                                 await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
                                 await thread.send({ 
-                                    content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨\n\n> **Advisory:** Experimental AI content. No-NSFW rules strictly enforced.` 
+                                    content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨\n\n> **Advisory:** Experimental AI content. Please ensure all creations align with community safety standards.` 
                                 });
                             } catch (err) {
                                 if (err.code === 50013) {

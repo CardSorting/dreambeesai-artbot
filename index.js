@@ -12,7 +12,7 @@ import { HiveInteraction } from './lib/discord-ux.js';
 
 // --- CONFIGURATION ---
 import { validateConfig, CONFIG } from './lib/config-check.js';
-validateConfig(); 
+validateConfig();
 // ---------------------
 
 const __filename = fileURLToPath(import.meta.url);
@@ -81,12 +81,12 @@ if (fs.existsSync(interactionsPath)) {
 
 client.once('ready', async () => {
     logger.info(`Logged in as ${client.user.tag}! Slash commands should be registered via scripts/register-commands.js`);
-    
+
     // Cleanup any hung locks and recover zombie transactions from previous sessions
     try {
         const cleaned = await cleanupStaleLocks();
         if (cleaned > 0) logger.info(`Cleaned up ${cleaned} stale locks on startup.`);
-        
+
         const recovered = await recoverZombieTransactions();
         if (recovered > 0) logger.info(`Successfully recovered ${recovered} zombie wallet transactions.`);
     } catch (e) {
@@ -125,8 +125,8 @@ export async function handleInteraction(interaction, client, activeJobs) {
                 if (!interaction.channel.isThread()) {
                     const permissions = interaction.appPermissions;
                     if (permissions && (!permissions.has('CreatePublicThreads') || !permissions.has('SendMessagesInThreads'))) {
-                        return await interaction.editReply({ 
-                            content: '❌ **Permissions Error:** I need permission to create threads to work seamlessly!', 
+                        return await interaction.editReply({
+                            content: '❌ **Permissions Error:** I need permission to create threads to work seamlessly!',
                         });
                     }
 
@@ -134,7 +134,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
                         // Optimized Fetch: Check Firestore first, then target fetch
                         let thread = null;
                         const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
-                        
+
                         if (storedThreadId) {
                             thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
                         }
@@ -146,20 +146,24 @@ export async function handleInteraction(interaction, client, activeJobs) {
                         }
 
                         if (!thread) {
-                            thread = await interaction.channel.threads.create({ 
-                                name: `🎨 ${interaction.user.username}'s Art Studio`, 
+                            thread = await interaction.channel.threads.create({
+                                name: `🎨 ${interaction.user.username}'s Art Studio`,
                                 autoArchiveDuration: 60,
                                 reason: 'DreamBees Personal Art Studio'
                             });
                             await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
                             await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
+                            const advisory = await thread.send({
+                                content: "CONTENT ADVISORY:This feed contains experimental, user-generated AI content. Individual discretion is advised. Please flag and self moderate if there is any issues. We strictly prohibit illegal content, including non-consensual deepfake NSFW. We use multiple layers of filtering to detect violations. Anyone who breaks these rules will be permanently banned, reported, and logged on devices, and IP addresses."
+                            });
+                            await advisory.pin().catch(e => ctxLogger.warn("Failed to pin content advisory", { error: e.message }));
                         } else if (thread.archived) {
                             await thread.setArchived(false);
                         }
 
                         // Attach the thread to our interaction proxy
                         hiveInteraction.thread = thread;
-                        
+
                         // Acknowledge the original slash command with the invitation link
                         await interaction.editReply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}` });
                     } catch (e) {
@@ -174,7 +178,7 @@ export async function handleInteraction(interaction, client, activeJobs) {
 
         } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
             const matchedPrefix = Array.from(client.buttonInteractions.keys()).find(prefix => interaction.customId.startsWith(prefix));
-            
+
             if (matchedPrefix) {
                 const handler = client.buttonInteractions.get(matchedPrefix);
                 activeJobs.add(interaction.id);
@@ -185,14 +189,14 @@ export async function handleInteraction(interaction, client, activeJobs) {
         }
     } catch (error) {
         ctxLogger.error('Interaction processing failed', error);
-        
+
         const errorMessage = { content: Hive.Voice.failure, ephemeral: true };
-        
+
         if (interaction.deferred || interaction.replied) {
-            await interaction.editReply(errorMessage).catch(() => {});
+            await interaction.editReply(errorMessage).catch(() => { });
         } else {
             if (interaction.isRepliable()) {
-                await interaction.reply(errorMessage).catch(() => {});
+                await interaction.reply(errorMessage).catch(() => { });
             }
         }
     } finally {
@@ -218,7 +222,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         if (url.pathname === '/healthz' || url.pathname === '/') {
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
             const isApiHealthy = !isCircuitOpen();
-            
+
             // Non-blocking DB Check with timeout
             let isDbHealthy = true;
             if (client.isReady()) {
@@ -237,21 +241,21 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
 
             if (isHealthy) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
-                    status: 'UP', 
+                res.end(JSON.stringify({
+                    status: 'UP',
                     memory: process.memoryUsage().rss,
-                    dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' } 
+                    dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' }
                 }));
             } else {
                 res.writeHead(503, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
-                    status: 'DOWN', 
+                res.end(JSON.stringify({
+                    status: 'DOWN',
                     reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : 'Database Timeout/Error'),
-                    dependencies: { 
-                        discord: isClientReady ? 'OK' : 'ERR', 
-                        api: isApiHealthy ? 'OK' : 'ERR', 
-                        db: isDbHealthy ? 'OK' : 'ERR' 
-                    } 
+                    dependencies: {
+                        discord: isClientReady ? 'OK' : 'ERR',
+                        api: isApiHealthy ? 'OK' : 'ERR',
+                        db: isDbHealthy ? 'OK' : 'ERR'
+                    }
                 }));
                 logger.warn('Production health check failed', { isClientReady, isApiHealthy, isDbHealthy });
             }
@@ -302,7 +306,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     // Graceful Shutdown
     const shutdown = async (signal) => {
         logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 60s)...`);
-        
+
         // Stop taking new interactions
         client.user?.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });
 
@@ -319,7 +323,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             logger.info(`All jobs drained. Goodbye!`);
         }
 
-        server.close(); 
+        server.close();
         client.destroy();
         process.exit(0);
     };

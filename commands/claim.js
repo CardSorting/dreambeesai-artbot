@@ -88,7 +88,7 @@ export async function execute(interaction) {
         });
 
         // Still set a short cooldown on errors to prevent spamming the interaction
-        await setCooldown(discordId, 15000);
+        await setCooldown(discordId, 15000).catch(() => {});
 
         if (isAlreadyClaimed) {
             return interaction.reply({ 
@@ -103,6 +103,6 @@ export async function execute(interaction) {
             ephemeral: true 
         });
     } finally {
-        await releaseLock(discordId);
+        await releaseLock(discordId).catch(e => logger.error('Failed to release claim lock', e));
     }
 }

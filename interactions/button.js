@@ -39,14 +39,19 @@ export async function execute(interaction) {
         let imageRes;
         let retries = 3;
         while (retries > 0) {
+            if (signal?.aborted) {
+                logger.info(`Upscale fetch cancelled by signal`, { originalInteractionId });
+                return;
+            }
             try {
                 imageRes = await fetchWithTimeout(imageUrl, { agent: keepAliveAgent, signal }, 20000);
                 if (imageRes.ok) break;
             } catch (fetchErr) {
+                if (fetchErr.name === 'AbortError') return;
                 logger.warn(`Fetch attempt failed for upscale image`, { attempt: 4 - retries, error: fetchErr.message });
             }
             retries--;
-            if (retries > 0) await new Promise(r => setTimeout(r, 1000));
+            if (retries > 0 && !signal?.aborted) await new Promise(r => setTimeout(r, 1000));
         }
 
         if (!imageRes || !imageRes.ok) throw new Error(`Failed to fetch image from S3 after retries: ${imageRes?.status}`);

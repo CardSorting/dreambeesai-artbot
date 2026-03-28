@@ -55,5 +55,5 @@ export async function execute(interaction) {
     }
 
     // 4. Start Generation (interaction already deferred by global handler in index.js)
-    return performGeneration(interaction, userData.uid, prompt, MODEL_ID);
+    return performGeneration(interaction, userData.uid, prompt, MODEL_ID, { jobs: arguments[1]?.jobs });
 }

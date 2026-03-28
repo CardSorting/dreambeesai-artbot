@@ -29,13 +29,13 @@ const __dirname = path.dirname(__filename);
 function startHeartbeat(activeJobs) {
     setInterval(() => {
         const memory = process.memoryUsage();
+        const uptime = process.uptime();
         logger.info('Bot Heartbeat', {
             activeJobs: activeJobs.size,
-            memory: {
-                rss: `${(memory.rss / 1024 / 1024).toFixed(2)} MB`,
-                heapUsed: `${(memory.heapUsed / 1024 / 1024).toFixed(2)} MB`
-            },
-            uptime: `${Math.floor(process.uptime() / 60)} minutes`
+            uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+            rss: `${Math.round(memory.rss / 1024 / 1024)}MB`,
+            heapUsed: `${Math.round(memory.heapUsed / 1024 / 1024)}MB`,
+            external: `${Math.round(memory.external / 1024 / 1024)}MB`
         });
     }, 15 * 60 * 1000); // Every 15 minutes
 }
@@ -47,7 +47,8 @@ const client = new Client({
     ]
 });
 
-const activeJobs = new Set();
+const activeJobs = new Map(); // interactionId -> AbortController
+const lastInteractions = []; // Tracking the last 5 IDs for forensic analysis
 
 client.commands = new Collection();
 const commands = [];
@@ -99,7 +100,30 @@ client.once('ready', async () => {
     }
 });
 
+client.on(Events.Error, (error) => {
+    logger.error('Discord Client Error', { error: error.message, stack: error.stack });
+});
+
+client.on(Events.Warn, (info) => {
+    logger.warn('Discord Client Warning', { info });
+});
+
+client.on('rateLimit', (rateLimitData) => {
+    logger.warn('Discord Rate Limit Encountered', {
+        timeout: rateLimitData.timeout,
+        limit: rateLimitData.limit,
+        method: rateLimitData.method,
+        path: rateLimitData.path,
+        route: rateLimitData.route,
+        global: rateLimitData.global
+    });
+});
+
 export async function handleInteraction(interaction, client, activeJobs) {
+    // Forensic tracking
+    lastInteractions.push({ id: interaction.id, type: interaction.type, user: interaction.user.tag, timestamp: new Date().toISOString() });
+    if (lastInteractions.length > 5) lastInteractions.shift();
+
     const ctxLogger = logger.child({
         interactionId: interaction.id,
         userId: interaction.user.id,
@@ -141,7 +165,12 @@ export async function handleInteraction(interaction, client, activeJobs) {
                         const storedThreadId = await getStudioThreadId(interaction.user.id, interaction.channelId);
 
                         if (storedThreadId) {
-                            thread = await interaction.channel.threads.fetch(storedThreadId).catch(() => null);
+                            try {
+                                thread = await interaction.channel.threads.fetch(storedThreadId);
+                            } catch (e) {
+                                ctxLogger.warn("Stored studio thread no longer exists or is unreachable", { storedThreadId, error: e.message });
+                                thread = null;
+                            }
                         }
 
                         if (!thread) {
@@ -151,49 +180,66 @@ export async function handleInteraction(interaction, client, activeJobs) {
                         }
 
                         if (!thread) {
-                            thread = await interaction.channel.threads.create({
-                                name: `🎨 ${interaction.user.username}'s Art Studio`,
-                                autoArchiveDuration: 60,
-                                reason: 'DreamBees Personal Art Studio'
-                            });
-                            await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
-                            await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
-                            const advisory = await thread.send({
-                                content: "CONTENT ADVISORY:This feed contains experimental, user-generated AI content. Individual discretion is advised. Please flag and self moderate if there is any issues. We strictly prohibit illegal content, including non-consensual deepfake NSFW. We use multiple layers of filtering to detect violations. Anyone who breaks these rules will be permanently banned, reported, and logged on devices, and IP addresses."
-                            });
-                            await advisory.pin().catch(e => ctxLogger.warn("Failed to pin content advisory", { error: e.message }));
+                            try {
+                                thread = await interaction.channel.threads.create({
+                                    name: `🎨 ${interaction.user.username}'s Art Studio`,
+                                    autoArchiveDuration: 60,
+                                    reason: 'DreamBees Personal Art Studio'
+                                });
+                                await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
+                                await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
+                                const advisory = await thread.send({
+                                    content: "CONTENT ADVISORY: This feed contains experimental, user-generated AI content. Please flag and self-moderate any issues. Anyone who breaks our strict no-NSFW/Deepfake rules will be permanently banned."
+                                });
+                                await advisory.pin().catch(e => ctxLogger.warn("Failed to pin content advisory", { error: e.message }));
+                            } catch (err) {
+                                if (err.code === 50013) {
+                                    ctxLogger.warn("Missing permissions to create threads in this channel", { channelId: interaction.channelId });
+                                    await interaction.editReply({ content: "⚠️ **Note:** I don't have permission to open your private Art Studio here, so I'll post your results right in this channel!" });
+                                    thread = null;
+                                } else {
+                                    throw err;
+                                }
+                            }
                         } else if (thread.archived) {
                             await thread.setArchived(false);
                         }
 
-                        // Attach the thread to our interaction proxy
-                        hiveInteraction.thread = thread;
+                        // Attach the thread to our interaction proxy (if created/found)
+                        if (thread) hiveInteraction.thread = thread;
 
-                        // Acknowledge the original slash command with the invitation link
-                        await interaction.editReply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}` });
+                        // Give a warm greeting if we (re)opened the studio
+                        if (thread && !interaction.replied) {
+                            await interaction.editReply({ content: `✅ **Drawing Room Ready!** I've opened your Art Studio: ${thread.toString()}` });
+                        }
                     } catch (e) {
                         ctxLogger.error("Failed to provision seamless thread", e);
-                        // Fallback will use the ephemeral response we already acknowledged
                     }
                 }
             }
             // Utility/admin commands (claim, status, config) manage their own deferral
 
-            return await command.execute(hiveInteraction, { logger: ctxLogger });
+            activeJobs.set(interaction.id, null); // Placeholder for local controller
+            return await command.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs });
 
         } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
             const matchedPrefix = Array.from(client.buttonInteractions.keys()).find(prefix => interaction.customId.startsWith(prefix));
 
             if (matchedPrefix) {
                 const handler = client.buttonInteractions.get(matchedPrefix);
-                activeJobs.add(interaction.id);
-                // Wrap component interactions in the safety proxy as well
+                // Standardize lifecycle with proxy
                 const hiveInteraction = new HiveInteraction(interaction);
-                await handler.execute(hiveInteraction, { logger: ctxLogger });
+                return await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs });
             }
         }
     } catch (error) {
-        ctxLogger.error('Interaction processing failed', error);
+        ctxLogger.error('Interaction processing failed', { 
+            error: error.message, 
+            stack: error.stack,
+            customId: interaction.customId || 'slash',
+            interactionId: interaction.id,
+            user: interaction.user.tag
+        });
 
         const errorMessage = { content: Hive.Voice.failure, ephemeral: true };
 
@@ -228,41 +274,56 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
             const isApiHealthy = !isCircuitOpen();
 
-            // Non-blocking DB Check with timeout
+            // Non-blocking DB Check with timeout and REAL write-read verification
             let isDbHealthy = true;
+            let dbDetails = 'OK';
             if (client.isReady()) {
                 const dbCheckPromise = (async () => {
-                    const healthRef = db.collection('_health').doc('probe');
-                    return !!healthRef;
+                    const probeRef = db.collection('_health').doc('probe');
+                    // Perform a lightweight write-read to verify full Firestore connectivity
+                    await probeRef.set({ 
+                        lastCheck: admin.firestore.FieldValue.serverTimestamp(),
+                        node: process.env.HOSTNAME || 'local-mac'
+                    });
+                    const snap = await probeRef.get();
+                    return snap.exists;
                 })();
-
-                const timeoutPromise = new Promise(r => setTimeout(() => r('TIMEOUT'), 5000));
+    
+                const timeoutPromise = new Promise(r => setTimeout(() => r('TIMEOUT'), 3000));
                 const result = await Promise.race([dbCheckPromise, timeoutPromise]);
-                if (result === 'TIMEOUT') isDbHealthy = false;
-                else isDbHealthy = !!result;
+                if (result === 'TIMEOUT') {
+                    isDbHealthy = false;
+                    dbDetails = 'TIMEOUT';
+                } else if (!result) {
+                    isDbHealthy = false;
+                    dbDetails = 'READ_FAIL';
+                }
             }
-
+    
             const isHealthy = isClientReady && isApiHealthy && isDbHealthy;
-
+    
             if (isHealthy) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     status: 'UP',
-                    memory: process.memoryUsage().rss,
-                    dependencies: { discord: 'OK', api: 'OK', db: isDbHealthy ? 'OK' : 'ERR' }
+                    uptime: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
+                    memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+                    activeJobs: activeJobs.size,
+                    node: process.env.HOSTNAME || 'local-mac',
+                    dependencies: { discord: 'OK', api: 'OK', db: 'OK' }
                 }));
             } else {
                 res.writeHead(503, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     status: 'DOWN',
-                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : 'Database Timeout/Error'),
+                    reason: !isClientReady ? 'Discord Not Ready' : (!isApiHealthy ? 'API Circuit Open' : `Database Error: ${dbDetails}`),
                     dependencies: {
                         discord: isClientReady ? 'OK' : 'ERR',
                         api: isApiHealthy ? 'OK' : 'ERR',
-                        db: isDbHealthy ? 'OK' : 'ERR'
+                        db: dbDetails
                     }
                 }));
-                logger.warn('Production health check failed', { isClientReady, isApiHealthy, isDbHealthy });
+                logger.warn('Production health check failed', { isClientReady, isApiHealthy, isDbHealthy, dbDetails });
             }
         } else {
             res.writeHead(404);
@@ -288,11 +349,27 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
 
     // Process-Level Safety Net: Prevent unhandled errors from killing the process
     process.on('unhandledRejection', (reason, promise) => {
-        logger.error('UNHANDLED PROMISE REJECTION — Bot safety net caught this', reason instanceof Error ? reason : { reason: String(reason) });
+        const context = {
+            uptime: `${Math.floor(process.uptime() / 60)}m`,
+            memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
+            activeJobs: activeJobs.size,
+            lastInteractions,
+            reason: reason instanceof Error ? reason.message : String(reason),
+            stack: reason instanceof Error ? reason.stack : null
+        };
+        logger.error('CRITICAL: UNHANDLED PROMISE REJECTION', context);
     });
 
     process.on('uncaughtException', (error) => {
-        logger.error('UNCAUGHT EXCEPTION — Bot safety net caught this', error);
+        const context = {
+            uptime: `${Math.floor(process.uptime() / 60)}m`,
+            memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
+            activeJobs: activeJobs.size,
+            lastInteractions,
+            message: error.message,
+            stack: error.stack
+        };
+        logger.error('CRITICAL: UNCAUGHT EXCEPTION — Hive Emergency Shutdown Initiating...', context);
         // Give logger time to flush, then exit (systemd/Docker will restart us)
         setTimeout(() => process.exit(1), 3000);
     });
@@ -306,11 +383,32 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         logger.warn('Discord.js Client Warning', { message });
     });
 
-    client.login(process.env.DISCORD_TOKEN);
+    // Login with hard timeout protection
+    const loginTimeout = setTimeout(() => {
+        logger.error('CRITICAL: Discord login timed out after 30s. Shutting down for restart.');
+        process.exit(1);
+    }, 30000);
+
+    client.login(process.env.DISCORD_TOKEN).then(() => {
+        clearTimeout(loginTimeout);
+        logger.info('Discord login successful.');
+    }).catch(err => {
+        clearTimeout(loginTimeout);
+        logger.error('Discord login failed immediately.', err);
+        process.exit(1);
+    });
 
     // Graceful Shutdown
     const shutdown = async (signal) => {
         logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 60s)...`);
+
+        // Trigger AbortControllers for all active jobs
+        for (const [id, controller] of activeJobs.entries()) {
+            if (controller) {
+                logger.info(`Aborting task ${id} due to shutdown.`);
+                controller.abort();
+            }
+        }
 
         // Stop taking new interactions
         client.user?.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });

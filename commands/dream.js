@@ -3,6 +3,7 @@ import { getOrCreateDiscordUser } from '../lib/db/users.js';
 import { performGeneration } from '../lib/generator.js';
 import { MODELS, calculateBatchCost } from '../lib/models.js';
 import { logger } from '../lib/logger.js';
+import { CONFIG } from '../lib/config-check.js';
 import * as Hive from '../lib/hive.js';
 
 export const category = 'image';
@@ -55,5 +56,5 @@ export async function execute(interaction) {
     }
 
     // 4. Start Generation (interaction already deferred by global handler in index.js)
-    return performGeneration(interaction, userData.uid, prompt, MODEL_ID);
+    return performGeneration(interaction, userData.uid, prompt, MODEL_ID, { jobs: arguments[1]?.jobs });
 }

@@ -187,11 +187,9 @@ export async function handleInteraction(interaction, client, activeJobs) {
                                     reason: 'DreamBees Personal Art Studio'
                                 });
                                 await setStudioThreadId(interaction.user.id, interaction.channelId, thread.id);
-                                await thread.send({ content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨` });
-                                const advisory = await thread.send({
-                                    content: "CONTENT ADVISORY: This feed contains experimental, user-generated AI content. Please flag and self-moderate any issues. Anyone who breaks our strict no-NSFW/Deepfake rules will be permanently banned."
+                                await thread.send({ 
+                                    content: `Welcome to your **Art Studio**, ${interaction.user.toString()}! 🎨\n\n> **Advisory:** Experimental AI content. No-NSFW rules strictly enforced.` 
                                 });
-                                await advisory.pin().catch(e => ctxLogger.warn("Failed to pin content advisory", { error: e.message }));
                             } catch (err) {
                                 if (err.code === 50013) {
                                     ctxLogger.warn("Missing permissions to create threads in this channel", { channelId: interaction.channelId });

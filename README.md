@@ -94,6 +94,9 @@ Explore more technical details about the DreamBees architecture and systems:
 - **[🛡️ Safety & Moderation](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/safety.md)**: Deep dive into the Queen's Guard and Hive security layers.
 - **[⚡ Zap Economy](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/economy.md)**: Transaction lifecycle and financial integrity.
 - **[📊 Data Model](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/data-model.md)**: Detailed Firestore ERD and storage strategy.
+- **[🚢 Deployment & DevOps](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/deployment.md)**: GCE "Always-On" setup and Dockerization instructions.
+- **[🛠️ Developer Toolkit](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/toolkit.md)**: Guide to administrative, maintenance, and testing scripts.
+- **[🩺 Troubleshooting](file:///Users/bozoegg/Desktop/DreamBees-DiscordBot/docs/troubleshooting.md)**: Common errors, lock resets, and connectivity diagnostics.
 
 ---
 

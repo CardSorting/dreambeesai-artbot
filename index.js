@@ -60,12 +60,29 @@ function startHeartbeat(activeJobs) {
 
 // --- GLOBAL PROCESS HARDENING ---
 process.on('unhandledRejection', (reason, promise) => {
-    logger.error('[CRITICAL] Unhandled Promise Rejection', reason, { promise });
+    const context = {
+        uptime: `${Math.floor(process.uptime() / 60)}m`,
+        memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
+        activeJobs: activeJobs.size,
+        lastInteractions,
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : null
+    };
+    logger.error('CRITICAL: UNHANDLED PROMISE REJECTION', context);
 });
 
-process.on('uncaughtException', (err) => {
-    logger.error('[FATAL] Uncaught Exception - SHUTTING DOWN', err);
-    process.exit(1);
+process.on('uncaughtException', (error) => {
+    const context = {
+        uptime: `${Math.floor(process.uptime() / 60)}m`,
+        memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
+        activeJobs: activeJobs.size,
+        lastInteractions,
+        message: error.message,
+        stack: error.stack
+    };
+    logger.error('CRITICAL: UNCAUGHT EXCEPTION — Hive Emergency Shutdown Initiating...', context);
+    // Give logger time to flush, then exit (systemd/Docker will restart us)
+    setTimeout(() => process.exit(1), 3000);
 });
 // --------------------------------
 
@@ -206,7 +223,8 @@ export async function handleInteraction(interaction, client, activeJobs) {
             const command = client.commands.get(interaction.commandName);
             if (!command) return;
 
-            activeJobs.set(interaction.id, null); // Placeholder for local controller
+            const controller = new AbortController();
+            activeJobs.set(interaction.id, controller);
             const hiveInteraction = new HiveInteraction(interaction);
 
             // Category-Aware Deferral Strategy:
@@ -283,16 +301,18 @@ export async function handleInteraction(interaction, client, activeJobs) {
             }
             // Utility/admin commands (claim, status, config) manage their own deferral
 
-            return await command.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs });
+            return await command.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs, signal: controller.signal });
 
         } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
             const matchedPrefix = Array.from(client.buttonInteractions.keys()).find(prefix => interaction.customId.startsWith(prefix));
 
             if (matchedPrefix) {
                 const handler = client.buttonInteractions.get(matchedPrefix);
+                const controller = new AbortController();
+                activeJobs.set(interaction.id, controller);
                 // Standardize lifecycle with proxy
                 const hiveInteraction = new HiveInteraction(interaction);
-                return await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs });
+                return await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: activeJobs, signal: controller.signal });
             }
         }
     } catch (error) {
@@ -491,32 +511,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
         }
     }, 15 * 60 * 1000);
 
-    // Process-Level Safety Net: Prevent unhandled errors from killing the process
-    process.on('unhandledRejection', (reason, promise) => {
-        const context = {
-            uptime: `${Math.floor(process.uptime() / 60)}m`,
-            memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
-            activeJobs: activeJobs.size,
-            lastInteractions,
-            reason: reason instanceof Error ? reason.message : String(reason),
-            stack: reason instanceof Error ? reason.stack : null
-        };
-        logger.error('CRITICAL: UNHANDLED PROMISE REJECTION', context);
-    });
-
-    process.on('uncaughtException', (error) => {
-        const context = {
-            uptime: `${Math.floor(process.uptime() / 60)}m`,
-            memory: `${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
-            activeJobs: activeJobs.size,
-            lastInteractions,
-            message: error.message,
-            stack: error.stack
-        };
-        logger.error('CRITICAL: UNCAUGHT EXCEPTION — Hive Emergency Shutdown Initiating...', context);
-        // Give logger time to flush, then exit (systemd/Docker will restart us)
-        setTimeout(() => process.exit(1), 3000);
-    });
+    // Duplicate handlers removed, logic moved to global section above.
 
     // Discord.js client-level error handlers
     client.on('error', (error) => {

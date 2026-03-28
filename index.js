@@ -374,10 +374,13 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
                         logger: logger.child({ requestId, source: 'CloudTasks' })
                     });
 
-                    await queueRef.update({
-                        ...result,
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                    });
+                    // ROUND TRIP REDUCTION: Only update if the processor didn't already do it in a consolidated batch
+                    if (!result._alreadyUpdated) {
+                        await queueRef.update({
+                            ...result,
+                            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                        }).catch(() => {});
+                    }
 
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ status: 'completed', requestId }));

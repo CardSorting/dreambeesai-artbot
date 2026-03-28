@@ -127,4 +127,7 @@ To add a new asynchronous task (e.g., "Upscaling" or "Video Generation"):
 
 When developing locally, Google Cloud Tasks cannot reach your `localhost`. Use **ngrok** to expose your port (e.g., 8080) and set `TASK_WEBHOOK_URL` to the ngrok forwarding address.
 
-**Note**: To bypass OIDC verification locally, you can set `NODE_ENV=development`, but ensure this is **never** done in a production environment.
+**Note**: To bypass OIDC verification locally, you can set `NODE_ENV=development`, but ensure this is **never** done in a production environment. 
+
+### 📡 Production Connectivity Note
+In production, ensure the `TASK_WEBHOOK_URL` uses a **Static External IP** or a persistent domain. If the GCE instance restarts with a new ephemeral IP, Cloud Tasks will fail to deliver payloads, resulting in stuck generations. See the **[Static IP Setup Guide](deployment.md#️-prerequisites-day-0-setup)**.

@@ -94,31 +94,29 @@ A multi-layered safety framework that performs:
 
 DreamBees is deployed as a hardened, immutable "Hive Node" on **Google Compute Engine (GCE)** using a professional-grade Unified CI/CD Pipeline.
 
-### 🛡️ The "Vault" Architecture
-- **Immutable OS**: The container runs with a **Read-Only Root Filesystem** for maximum runtime security.
-- **Unified Pipeline (v3.0)**: A fully automated **Build-Scan-Deploy** manifest (`cloudbuild.yaml`) that handles everything from parallel linting to automated vulnerability gating.
-- **Kaniko Acceleration**: High-performance layer caching cuts build times by up to 10x.
+### 📋 Prerequisites Checklist
+Before deploying, ensure you have:
+- [ ] A Google Cloud Project with Billing enabled.
+- [ ] Required APIs enabled (`Compute`, `Cloud Build`, `Artifact Registry`, `Cloud Tasks`).
+- [ ] A service account with `Cloud Build Editor` and `Compute Admin` roles.
+- [ ] A populated `.env` file based on `.env.example`.
 
-### 🏁 Quick Deployment
-1. **Initialize Environment**:
-   ```bash
-   cp .env.example .env && # Populate with credentials
-   ```
+### 🏁 Quick Start
+1. **Initialize Cloud Resources**:
+   See the **[Infrastructure Setup Guide](./docs/deployment.md#️-prerequisites-day-0-setup)**.
 2. **Trigger Unified Pipeline**:
    ```bash
    ./scripts/deploy-gce.sh
    ```
 
-### 🩺 System Health Monitoring
-The Hive Node exposes a dependency-aware health probe for mission-critical observability:
-```bash
-curl http://[INSTANCE_IP]:8080/healthz
-```
-*Provides real-time status of Discord Gateway, Firestore, Modal Inference, and B2 Storage.*
+### 🛰️ The "Vault" Architecture
+- **Immutable OS**: The container runs with a **Read-Only Root Filesystem** for maximum runtime security.
+- **Unified Pipeline (v3.0)**: A fully automated **Build-Scan-Deploy** manifest (`cloudbuild.yaml`) that handles everything from parallel linting to automated vulnerability gating.
+- **Kaniko Acceleration**: High-performance layer caching cuts build times by up to 10x.
 
 ---
 
-For a deep dive into the orchestration engineering, see the **[🚢 Deployment Guide](./docs/deployment.md)**.
+For a deep dive into the orchestration engineering, see the **[🚢 Detailed Deployment Guide](./docs/deployment.md)**.
 
 ---
 

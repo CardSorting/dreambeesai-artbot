@@ -2,14 +2,30 @@
 # 🐝 DreamBees Hive Node: Unified Pipeline Trigger (v1.7)
 set -e
 
-# --- FLAGS ---
+# --- HELP & FLAGS ---
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Options:"
+    echo "  --skip-lint    Skip the parallel linting and verification steps in Cloud Build."
+    echo "  --help         Show this help message."
+    exit 0
+}
+
 SKIP_LINT=false
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --skip-lint) SKIP_LINT=true ;;
+        --help) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
     esac
     shift
 done
+
+# --- PREREQUISITE CHECKS ---
+if ! command -v gcloud &> /dev/null; then
+    echo "❌ Error: 'gcloud' CLI is not installed. Please install it to proceed."
+    exit 1
+fi
 
 # --- CONFIGURATION ---
 PROJECT_ID="dreambees-alchemist"

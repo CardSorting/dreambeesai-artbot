@@ -38,11 +38,16 @@ import path from 'path';
 
 console.log("\nChecking critical files...");
 const saPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.resolve(process.cwd(), './serviceAccountKey.json');
-if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON && !fs.existsSync(saPath)) {
-    console.error(`[MISSING] Firebase Service Account! Neither FIREBASE_SERVICE_ACCOUNT_JSON nor ${saPath} found.`);
+const hasSA = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || fs.existsSync(saPath);
+const hasWebSDK = process.env.FIREBASE_API_KEY;
+
+if (!hasSA && !hasWebSDK) {
+    console.error(`[MISSING] Firebase Credentials! Neither a Service Account nor a Web SDK API Key was found.`);
     missing = true;
+} else if (hasSA) {
+    console.log(`[OK] Firebase Service Account credentials found (Admin SDK mode).`);
 } else {
-    console.log(`[OK] Firebase Service Account credentials found.`);
+    console.log(`[OK] Firebase API Key found (Web SDK Fallback mode).`);
 }
 
 if (missing) {

@@ -205,7 +205,7 @@ client.on('interactionCreate', async interaction => {
 if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.meta.url === `file://${process.argv[1]}`) {
     logger.warn("Missing DISCORD_TOKEN or DISCORD_CLIENT_ID in .env file. Bot cannot start.");
 } else if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV === 'production') {
-    validateEnvironment();
+    validateConfig();
     startHeartbeat(activeJobs);
 
     // Robust HTTP Server for Cloud Run Health Checks

@@ -103,9 +103,19 @@ async function verifyOidcToken(req) {
         });
         const payload = ticket.getPayload();
         
-        // PRODUCTION HARDENING: Strict Issuer and verification checks
+        // PRODUCTION HARDENING: Identity Locking
         const isGoogleIssuer = (payload.iss === 'https://accounts.google.com' || payload.iss === 'accounts.google.com');
-        return isGoogleIssuer && payload.email_verified && !!payload.email;
+        const isAuthorizedEmail = !process.env.CLOUD_TASKS_SA_EMAIL || payload.email === process.env.CLOUD_TASKS_SA_EMAIL;
+        
+        if (!isGoogleIssuer || !payload.email_verified || !isAuthorizedEmail) {
+            logger.warn("OIDC Identity Mismatch", { 
+                iss: payload.iss, 
+                email: payload.email, 
+                expected: process.env.CLOUD_TASKS_SA_EMAIL 
+            });
+            return false;
+        }
+        return true;
     } catch (e) {
         logger.error("OIDC Verification Failed", { error: e.message });
         return false;

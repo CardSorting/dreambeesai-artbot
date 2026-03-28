@@ -6,7 +6,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './lib/logger.js';
 import * as Hive from './lib/hive.js';
-import { cleanupStaleLocks, recoverZombieTransactions, getStudioThreadId, setStudioThreadId, db, getOrCreateDiscordUser } from './lib/db.js';
+import { db } from './lib/firebase.js';
+import { cleanupStaleLocks } from './lib/db/locks.js';
+import { recoverZombieTransactions } from './lib/db/recovery.js';
+import { getStudioThreadId, setStudioThreadId } from './lib/db/threads.js';
+import { getOrCreateDiscordUser } from './lib/db/users.js';
+
 import { isCircuitOpen } from './lib/api/dreambees.js';
 import { HiveInteraction } from './lib/discord-ux.js';
 

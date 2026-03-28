@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
+import http from 'http';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -206,12 +207,34 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
 } else if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV === 'production') {
     validateEnvironment();
     startHeartbeat(activeJobs);
+
+    // Robust HTTP Server for Cloud Run Health Checks
+    const port = process.env.PORT || 8080;
+    const startTime = Date.now();
+    const server = http.createServer((req, res) => {
+        // Only return 200 if the Discord client is actually logged in and ready
+        // Give a 30-second grace period for initial connection
+        if (client.isReady() || (Date.now() - startTime < 30000)) {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('DreamBees Hive: ONLINE 🐝');
+        } else {
+            res.writeHead(503, { 'Content-Type': 'text/plain' });
+            res.end('DreamBees Hive: STARTING/RECONNECTING... ⏳');
+            logger.warn('Health check failed: Discord client not ready after grace period');
+        }
+    }).listen(port, () => {
+        logger.info(`Health check server listening on port ${port}`);
+    });
+
     client.login(process.env.DISCORD_TOKEN);
 
     // Graceful Shutdown
     const shutdown = async (signal) => {
         logger.info(`Received ${signal}. Active jobs: ${activeJobs.size}. Waiting for drainage (up to 30s)...`);
         
+        // Stop taking new interactions if possible (Discord.js doesn't have a direct 'pause' but we can flag it)
+        client.user?.setPresence({ status: 'dnd', activities: [{ name: 'Hive Relocating...', type: ActivityType.Custom }] });
+
         let waitAttempts = 0;
         while (activeJobs.size > 0 && waitAttempts < 30) {
             await new Promise(r => setTimeout(r, 1000));
@@ -225,6 +248,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
             logger.info(`All jobs drained. Goodbye!`);
         }
 
+        server.close(); 
         client.destroy();
         process.exit(0);
     };

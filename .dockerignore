@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+.git
+.gitignore
+.dockerignore
+tests
+*.md
+LICENSE
+.github
+eslint.config.js
+serviceAccountKey.json
+scripts/*.sh
+docs

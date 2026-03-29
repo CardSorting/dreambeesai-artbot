@@ -97,33 +97,36 @@ EXTERNAL_IP=$(gcloud compute instances describe ${INSTANCE_NAME} --zone=${ZONE} 
 if [ -z "$EXTERNAL_IP" ]; then
     echo "⚠️ Warning: Failed to fetch external IP. Skipping smoke test."
 else
-    echo "🔗 Instance IP: ${EXTERNAL_IP}. Waiting for container startup (30s)..."
-    sleep 30
-
-    ATTEMPTS=0
-    MAX_ATTEMPTS=3
+    echo "🩺 Initiating zero-delay High-Frequency Smoke Test..."
     HEALTH_CHECK_URL="http://${EXTERNAL_IP}:8080/healthz"
+    echo "🔗 Target: ${HEALTH_CHECK_URL}"
 
-    while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-        echo "📡 Pinging Health Probe: ${HEALTH_CHECK_URL} (Attempt $((ATTEMPTS+1))/$MAX_ATTEMPTS)..."
-        HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_CHECK_URL" || echo "000")
+    START_TIME=$(date +%s)
+    TIMEOUT=60
+    INTERVAL=2
+    
+    echo "📡 Polling for life (Max ${TIMEOUT}s)..."
+    while true; do
+        CURRENT_TIME=$(date +%s)
+        ELAPSED=$((CURRENT_TIME - START_TIME))
+        
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "❌ SMOKE TEST FAILED: Hive Node timed out after ${TIMEOUT}s."
+            echo "🧐 Initiating Failure Forensics..."
+            gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE} --start=0 | tail -n 50
+            exit 1
+        fi
+
+        HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "$HEALTH_CHECK_URL" || echo "000")
         
         if [ "$HTTP_RESPONSE" == "200" ]; then
-            echo "✅ SMOKE TEST PASSED: Hive Node v${GIT_SHA} is mission-ready!"
+            echo "✅ SMOKE TEST PASSED: Hive Node v${GIT_SHA} is ONLINE after ${ELAPSED}s!"
             break
-        else
-            echo "⏳ Still initializing (Status: $HTTP_RESPONSE)..."
-            ATTEMPTS=$((ATTEMPTS+1))
-            [ $ATTEMPTS -lt $MAX_ATTEMPTS ] && sleep 15
         fi
-    done
 
-    if [ "$HTTP_RESPONSE" != "200" ]; then
-        echo "❌ SMOKE TEST FAILED: Hive Node did not report UP in time."
-        echo "🧐 Initiating Failure Forensics..."
-        gcloud compute instances get-serial-port-output ${INSTANCE_NAME} --zone=${ZONE} --start=0 | tail -n 50
-        exit 1
-    fi
+        echo "⏳ [${ELAPSED}s] Initializing... (Status: $HTTP_RESPONSE)"
+        sleep $INTERVAL
+    done
 fi
 
 echo "✅ HIVE NODE DEPLOYED: Unified Lifecycle complete."

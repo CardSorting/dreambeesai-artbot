@@ -12,12 +12,14 @@ WORKDIR /app
 
 # [LAYER CACHING] Dependency isolation
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --quiet --no-fund
 
 # Copy source and Build
 COPY . .
-RUN npm run build \
-    && npm prune --production \
+RUN npm run build
+
+# [PRUNING] Remove development dependencies and bloat
+RUN npm prune --production --quiet \
     && find node_modules -name "*.map" -type f -delete \
     && find node_modules -name "README*" -type f -delete \
     && find node_modules -name "LICENSE*" -type f -delete \

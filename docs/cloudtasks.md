@@ -1,74 +1,72 @@
 # 🐝 Google Cloud Tasks: The Hive's Asynchronous Engine
 
-The DreamBees Discord Bot utilizes **Google Cloud Tasks** as its primary asynchronous processing engine. This architecture ensures that long-running image generation tasks (which can take between 60 to 300 seconds) are handled reliably without blocking the Discord client or risking interaction timeouts.
+The DreamBees Discord Bot utilizes **Google Cloud Tasks** as its primary asynchronous processing engine. This architecture ensures that long-running image generation tasks (which can take between 30 to 300 seconds) are handled reliably without blocking the Discord client or risking interaction timeouts.
 
 ---
 
-## 🏗️ Architectural Deep Dive
+## 🏗️ Architectural Deep Dive (Sovereign v4)
 
 ### High-Level Workflow Sequence
 
 ```mermaid
 sequenceDiagram
     participant User as 👤 User
-    participant Bot as 🐝 Discord Bot
+    participant Engine as 🐝 HiveEngine (Discord)
     participant CT as ☁️ Cloud Tasks
     participant Webhook as 🔗 Webhook (/tasks/...)
-    participant Processor as ⚙️ Processor
+    participant Worker as ⚙️ Worker (executeGeneration)
     participant API as 🧠 AI API
-    participant DB as 🔥 Firestore
+    participant DB as 🔥 HivePersistence
 
-    User->>Bot: /dream {prompt}
-    Bot->>DB: Debit & Create 'queued' State
-    Bot->>CT: Enqueue Task (Payload + OIDC)
-    Bot-->>User: "🐝 Queued! Preparing worker..."
+    User->>Engine: /dream {prompt}
+    Engine->>DB: Debit Zaps & Create 'queued' State
+    Engine->>CT: Enqueue Task (Payload + OIDC)
+    Engine-->>User: "🐝 Queued! Preparing worker..."
     
     CT->>Webhook: POST Webhook Request
     Webhook->>Webhook: Verify OIDC Identity
-    Webhook->>Processor: Initiate processGenerationTask()
-    Processor->>DB: Update State to 'processing'
+    Webhook->>DB: Atomic Claim (status -> 'processing')
+    Webhook->>Worker: Initiate executeGeneration()
     
-    Processor->>API: Generate 4x Images (Parallel)
-    API-->>Processor: Image Buffers
-    Processor->>Processor: Stitch Grid & Upload S3
+    Worker->>API: Generate Images (Parallel)
+    API-->>Worker: Image Buffers
+    Worker->>Worker: Stitch Grid
     
-    Processor->>DB: Update State to 'completed' + Results
-    DB-->>Bot: Snapshot Trigger
-    Bot->>User: Deliver Result Embed
+    Worker->>DB: Update Status to 'completed'
+    Worker->>Engine: Deliver Result to Discord Channel
+    Engine->>User: Message: "🐝 Harvest Complete!"
+    
+    Note over Worker,DB: If Failure: Worker triggers Refund & status -> 'failed'
 ```
 
 ---
 
 ## 🧩 Core Components & Files
 
-### 1. **The Dispatcher** (`lib/queue/cloudtasks.js`)
-Responsible for packaging and sending tasks to Google Cloud.
-- **`createCloudTask(payload, options)`**: 
-    - Construct the parent queue path.
-    - Encodes the payload (requestId, prompt, modelId, user info) into Base64.
-    - Configures the OIDC token with the correct service account and audience.
-    - Implements production hardening by failing fast if critical config is missing.
+### 1. **The Dispatcher** (`src/core/HiveEngine.ts`)
+Integrated directly into the `HiveEngine` pillar.
+- **`enqueueGeneration(payload)`**: 
+    - Saves the initial record to `artbot_generations` with `status: 'queued'`.
+    - Packages the interaction metadata into a Cloud Task.
+    - Configures OIDC with the service account and audience (Webhook URL).
+    - Dispatches to the configured Google Cloud region.
 
-### 2. **The Webhook Listener** (`index.js`)
-An HTTP server (defaulting to port 8080) that serves as the entry point for Cloud Tasks.
+### 2. **The Webhook Listener** (`src/core/HiveEngine.ts`)
+The unified HTTP server within the monolith (defaulting to port 8080).
 - **Route**: `POST /tasks/process-generation`
-- **Verification**: `verifyOidcToken(req)` uses `google-auth-library` to validate the Google-signed token.
-- **Identity Locking**: Strictly checks the issuer and email against `CLOUD_TASKS_SA_EMAIL` to prevent unauthorized task injection.
+- **Identity Locking**: Validates the OIDC Bearer token via `google-auth-library`.
+- **Idempotency (Claiming)**: Uses `hivePersistence.claimTask()` to ensure a task is only processed once, even if Cloud Tasks retries the delivery.
 
-### 3. **The Processor** (`lib/queue/processor.js`)
-The stateless execution unit for generation tasks.
-- **`processGenerationTask(payload, options)`**:
-    - **Idempotency**: Checks Firestore if the task is already completed (prevents double-billing).
-    - **Concurrency**: Uses `p-limit` for parallel image generation and S3 uploads.
-    - **Atomic Updates**: Uses Firestore batches to update generation records, transaction logs, and queue status in a single round-trip.
-    - **Self-Healing**: Automatically triggers `Wallet.refund()` on fatal processing errors.
+### 3. **The Worker** (`src/core/HiveEngine.ts`)
+The background execution logic (`executeGeneration`).
+- **Concurrency Control**: Uses a dedicated `workerLimit` (default 2) to prevent instance OOM from simultaneous AI calls.
+- **AI Integration**: Calls `HiveGenerator` for generation or remixing.
+- **Autonomous Recovery**: If the AI model fails or a network error occurs, the worker **automatically issues a refund** to the user and updates the record to `failed`.
 
-### 4. **The Orchestrator** (`lib/generator.js`)
-The stateful manager that connects the Discord UI to the background task.
-- **`performGeneration(...)`**:
-    - Manages per-user locks (`tryLock`) to prevent spam.
-    - Subscribes to the Firestore document using `onSnapshot` to react to state changes in real-time.
-    - Implements a **300s Hard Timeout** safety net to prevent hanging interaction listeners.
+### 4. **The Persistence Layer** (`src/services/HivePersistence.ts`)
+Manages all atomic state transitions.
+- **`claimTask(id)`**: Transactionally moves a generation from `queued` to `processing`.
+- **`refund(id, reason)`**: Atomically returns Zaps to the user and marks the transaction as `refunded`.
 
 ---
 
@@ -79,6 +77,7 @@ Cloud Tasks doesn't just send a request; it sends a **proof of identity**.
 1.  **Audience Binding**: The token generated by Cloud Tasks is bound to the `TASK_WEBHOOK_URL`. If the bot receives a token meant for another service, it will be rejected.
 2.  **Issuer Verification**: The bot verifies the token is signed by Google's public keys.
 3.  **Service Account Check**: In production, the bot ensures the `email` claim in the token matches the expected `CLOUD_TASKS_SA_EMAIL`.
+4.  **Dev Mode Bypass**: In `development` mode, the OIDC check can be bypassed to allow tool-based testing (e.g. `scripts/test_webhook.ts`).
 
 ---
 
@@ -91,24 +90,7 @@ Cloud Tasks doesn't just send a request; it sends a **proof of identity**.
 | `CLOUD_TASKS_QUEUE` | **Required** | The specific queue name. |
 | `CLOUD_TASKS_SA_EMAIL` | **Critical** | The Service Account email used for OIDC signing. |
 | `TASK_WEBHOOK_URL` | **Required** | The full public URL of the bot's task endpoint. |
-
----
-
-## 🛠️ Operational Guide
-
-### Common Error Troubleshooting
-
-| Error Symptom | Potential Cause | Solution |
-| :--- | :--- | :--- |
-| `403 Unauthorized Task Delivery` | OIDC Token Mismatch | Check `CLOUD_TASKS_SA_EMAIL` and `TASK_WEBHOOK_URL` match Google Cloud settings. |
-| `503 Service Unavailable` | Bot Health Failure | Check `/healthz` endpoint. Discord client might be offline or DB disconnected. |
-| `Task Timeout (300s)` | Generation hung | Inspect `processor.js` logs for AI API hang or S3 upload failure. |
-| `Duplicate Generation` | Idempotency Check Fail | Ensure Firestore `requestId` is correctly passed and checked in `processor.js`. |
-
-### Performance & Limits
-- **Max Global Queue**: Configured in `generator.js` (default 500). Prevents the system from being overwhelmed.
-- **Task Payload Limit**: Max 1MB body size enforced by the webhook listener.
-- **HTTP Server Timeout**: Set to 5 minutes to accommodate slow generation batches.
+| `WORKER_CONCURRENCY`| **Optional** | Max simultaneous tasks per bot instance (default: 2). |
 
 ---
 
@@ -116,18 +98,19 @@ Cloud Tasks doesn't just send a request; it sends a **proof of identity**.
 
 To add a new asynchronous task (e.g., "Upscaling" or "Video Generation"):
 
-1.  **Define a new route**: Add a pathname check in the `index.js` HTTP server.
-2.  **Create a Dispatcher**: Add an enqueuing function in `lib/queue/cloudtasks.js`.
-3.  **Implement the Processor**: Add a corresponding processing function in `lib/queue/processor.js`.
+1.  **Update Routes**: Add a pathname check in `HiveEngine.initializeServer()`.
+2.  **Add Processing Method**: Implement the new logic in `HiveEngine` (like `executeGeneration`).
+3.  **Update Persistence**: Ensure status tracking and refund paths are supported in `HivePersistence`.
 4.  **Register the Webhook**: Ensure the new route path is allowed in your Cloud Tasks configuration.
 
 ---
 
-## 🧪 Local Development Tip
+## 🧪 Local Deployment Tip
 
 When developing locally, Google Cloud Tasks cannot reach your `localhost`. Use **ngrok** to expose your port (e.g., 8080) and set `TASK_WEBHOOK_URL` to the ngrok forwarding address.
 
-**Note**: To bypass OIDC verification locally, you can set `NODE_ENV=development`, but ensure this is **never** done in a production environment. 
+**Note**: To bypass OIDC verification locally, ensure `this.config.NODE_ENV` is set to `development`.
 
 ### 📡 Production Connectivity Note
-In production, ensure the `TASK_WEBHOOK_URL` uses a **Static External IP** or a persistent domain. If the GCE instance restarts with a new ephemeral IP, Cloud Tasks will fail to deliver payloads, resulting in stuck generations. See the **[Static IP Setup Guide](deployment.md#️-prerequisites-day-0-setup)**.
+In production, ensure the `TASK_WEBHOOK_URL` uses a **Static External IP** or a persistent domain. If the GCE instance restarts with a new ephemeral IP, Cloud Tasks will fail to deliver payloads, resulting in stuck generations.
+ Setup Guide](deployment.md#️-prerequisites-day-0-setup)**.

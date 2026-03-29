@@ -73,6 +73,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const logger = new Logger();
 const imageLimit = pLimit(Number(process.env.IMAGE_CONCURRENCY) || 4);
+const workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
 const cloudTasksClient = new CloudTasksClient();
 
 sharp.cache(false);
@@ -568,6 +569,7 @@ export class HiveEngine {
             },
         };
 
+        await hivePersistence.saveGeneration(payload.interactionId, payload);
         await cloudTasksClient.createTask({ parent, task });
     }
 
@@ -575,9 +577,9 @@ export class HiveEngine {
     private initializeServer() {
         this.server = http.createServer(async (req, res) => {
             const url = new URL(req.url || '/', `http://${req.headers.host}`);
-            if (url.pathname === '/healthz') return this.handleHealthCheck(res);
-            if (req.method === 'POST' && url.pathname === '/tasks/process-generation') return this.handleTaskWebhook(req, res);
-            res.writeHead(404).end();
+        if (url.pathname === '/healthz') return this.handleHealthCheck(res);
+        if (req.method === 'POST' && url.pathname === '/tasks/process-generation') return this.handleTaskWebhook(req, res);
+        res.writeHead(404).end();
         });
         this.server.listen(this.config.PORT || 8080);
     }
@@ -603,32 +605,60 @@ export class HiveEngine {
         req.on('end', async () => {
             try {
                 // 1. OIDC Identity Verification
+                const isDevelopment = this.config.NODE_ENV === 'development';
                 const authHeader = req.headers['authorization'];
-                if (!authHeader?.startsWith('Bearer ')) {
-                    logger.warn('[WORKER] Missing OIDC Token');
-                    res.writeHead(401).end('Unauthorized');
-                    return;
-                }
-
-                const idToken = authHeader.split(' ')[1];
-                const audience = this.config.TASK_WEBHOOK_URL;
                 
-                try {
-                    await this.authClient.verifyIdToken({
-                        idToken,
-                        audience
-                    });
-                } catch (oidcErr) {
-                    logger.error('[WORKER] OIDC Verification Failed', oidcErr);
-                    res.writeHead(403).end('Forbidden');
-                    return;
+                if (isDevelopment && !authHeader) {
+                    logger.info('[WORKER] Dev Mode: Bypassing OIDC verification');
+                } else {
+                    if (!authHeader?.startsWith('Bearer ')) {
+                        logger.warn('[WORKER] Missing OIDC Token');
+                        res.writeHead(401).end('Unauthorized');
+                        return;
+                    }
+
+                    const idToken = authHeader.split(' ')[1];
+                    // Normalize audience: match exactly what Cloud Tasks sends or what's in config
+                    // We also strip trailing slashes to avoid common configuration mismatches
+                    const configAudience = this.config.TASK_WEBHOOK_URL.replace(/\/$/, '');
+                    
+                    try {
+                        const ticket = await this.authClient.verifyIdToken({
+                            idToken,
+                            audience: [configAudience, this.config.TASK_WEBHOOK_URL]
+                        });
+                        
+                        const payload = ticket.getPayload();
+                        if (process.env.NODE_ENV === 'production' && this.config.CLOUD_TASKS_SA_EMAIL) {
+                            if (payload?.email !== this.config.CLOUD_TASKS_SA_EMAIL) {
+                                throw new Error(`Identity Mismatch: Expected ${this.config.CLOUD_TASKS_SA_EMAIL}, got ${payload?.email}`);
+                            }
+                        }
+                    } catch (oidcErr: any) {
+                        logger.error('[WORKER] Auth Failure', { 
+                            error: oidcErr.message,
+                            configuredAudience: configAudience,
+                            env: process.env.NODE_ENV
+                        });
+                        res.writeHead(403).end(`Forbidden: ${oidcErr.message}`);
+                        return;
+                    }
                 }
 
                 // 2. Process Payload
                 const payload = JSON.parse(body) as GenerationTask;
-                logger.info(`[WORKER] Hive Task Accepted: ${payload.interactionId}`);
                 
-                // 3. Background Execution (Fire & Forget from HTTP context)
+                // 3. Atomic Task Claim (Idempotency)
+                const claim = await hivePersistence.claimTask(payload.interactionId);
+                if (!claim.success) {
+                    logger.info(`[WORKER] Idempotency Intercept: ${payload.interactionId} (${claim.reason})`);
+                    res.writeHead(200).end(JSON.stringify({ status: 'already_processing_or_completed' }));
+                    return;
+                }
+
+                logger.info(`[WORKER] Hive Task Claimed: ${payload.interactionId}`);
+                
+                // 4. Background Execution
                 this.executeGeneration(payload).catch(err => {
                     logger.error(`[WORKER] Background Mission Failed: ${payload.interactionId}`, err);
                 });
@@ -646,67 +676,78 @@ export class HiveEngine {
      * Transitions from Core orchestration to Infrastructure execution.
      */
     private async executeGeneration(task: GenerationTask) {
-        const { interactionId, discordId, channelId } = task;
-        
-        try {
-            // 1. GENERATION: Generate via AI Model or Remix via Modal Edit
-            logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
+        return workerLimit(async () => {
+            const { interactionId, discordId, channelId } = task;
             
-            let result;
-            if (task.imageUrl) {
-                result = await this.hiveGenerator.remix(task, task.imageUrl);
-            } else {
-                result = await this.hiveGenerator.generate(task);
-            }
-
-            if (result.status === 'failed') {
-                throw new Error(result.error || 'AI Generation Failed');
-            }
-
-            // 2. PLUMBING: Stitch buffers
-            logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
-            const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
-            const stitched = await HiveGenerator.stitch(buffers);
-
-            // 3. CORE/UI: Discord Delivery
-            const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });
-            const channel = await this.client.channels.fetch(channelId).catch(() => null);
-            
-            if (channel && 'send' in channel) {
-                const components = [];
-                if (result.images.length > 1) {
-                    components.push(HiveUX.createUpscaleRow(interactionId, result.images.length));
-                } else if (result.images.length === 1) {
-                    // Show a single button for 1-image generations so users can access 
-                    // Remix controls on the individual image.
-                    components.push(HiveUX.createUpscaleRow(interactionId, 1));
+            try {
+                // 1. GENERATION: Generate via AI Model or Remix via Modal Edit
+                logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
+                
+                let result;
+                if (task.imageUrl) {
+                    result = await this.hiveGenerator.remix(task, task.imageUrl);
+                } else {
+                    result = await this.hiveGenerator.generate(task);
                 }
-                components.push(HiveUX.createModRow(interactionId));
 
-                await (channel as any).send({ 
-                    content: `🐝 **Harvest Complete!** <@${discordId}>, your vision from the hive:`, 
-                    files: [attachment],
-                    components
-                });
+                if (result.status === 'failed') {
+                    throw new Error(result.error || 'AI Generation Failed');
+                }
+
+                // 2. PLUMBING: Stitch buffers
+                logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
+                const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
+                const stitched = await HiveGenerator.stitch(buffers);
+
+                // 3. CORE/UI: Discord Delivery
+                const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });
+                const channel = await this.client.channels.fetch(channelId).catch(() => null);
+                
+                if (channel && 'send' in channel) {
+                    const components = [];
+                    if (result.images.length > 1) {
+                        components.push(HiveUX.createUpscaleRow(interactionId, result.images.length));
+                    } else if (result.images.length === 1) {
+                        components.push(HiveUX.createUpscaleRow(interactionId, 1));
+                    }
+                    components.push(HiveUX.createModRow(interactionId));
+
+                    await (channel as any).send({ 
+                        content: `🐝 **Harvest Complete!** <@${discordId}>, your vision from the hive:`, 
+                        files: [attachment],
+                        components
+                    });
+                }
+
+                // 4. INFRASTRUCTURE: Update State
+                const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+                await hivePersistence.setDocCompat(genRef, {
+                    status: 'completed',
+                    resolvedAt: hivePersistence.fieldValue.serverTimestamp()
+                }, { merge: true });
+
+                logger.info(`[WORKER] Mission Accomplished: ${interactionId}`);
+
+            } catch (err: any) {
+                logger.error(`[WORKER] Mission Failure: ${interactionId}`, err);
+                
+                // Autonomous Refund & State Update
+                const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+                await hivePersistence.setDocCompat(genRef, {
+                    status: 'failed',
+                    error: err.message
+                }, { merge: true });
+
+                const refunded = await hivePersistence.refund(interactionId, `Worker Failure: ${err.message}`);
+                if (refunded) {
+                    logger.info(`[WORKER] Autonomous Refund Issued for ${interactionId}`);
+                    const channel = await this.client.channels.fetch(channelId).catch(() => null);
+                    if (channel && 'send' in channel) {
+                        await (channel as any).send(`⚠️ **Worker Lost in the Fields:** Your mission failed, but your Zaps have been returned. Reason: \`${err.message}\``);
+                    }
+                }
             }
-
-            // 4. INFRASTRUCTURE: Update State
-            const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
-            await hivePersistence.setDocCompat(genRef, {
-                status: 'completed',
-                resolvedAt: hivePersistence.fieldValue.serverTimestamp()
-            }, { merge: true });
-
-            logger.info(`[WORKER] Mission Accomplished: ${interactionId}`);
-
-        } catch (err: any) {
-            logger.error(`[WORKER] Mission Failure: ${interactionId}`, err);
-            const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
-            await hivePersistence.setDocCompat(genRef, {
-                status: 'failed',
-                error: err.message
-            }, { merge: true });
-        }
+        });
     }
 
     private isCircuitOpen(service: 'generation') {

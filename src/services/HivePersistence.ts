@@ -54,7 +54,7 @@ export interface Transaction {
     previousBalance?: number;
     newBalance?: number;
     requestId?: string;
-    status: 'pending' | 'completed' | 'refunded' | 'failed';
+    status: 'pending' | 'processing' | 'completed' | 'refunded' | 'failed';
     source?: string;
     metadata?: any;
     timestamp: any; // Firestore Timestamp
@@ -196,10 +196,18 @@ export class HivePersistence {
         if (this.isWebSDK) {
             return await webRunTransaction(this.db, async (webT) => {
                 const shimT = {
-                    get: (ref: any) => webGetDoc(ref),
-                    set: (ref: any, data: any, options?: any) => webSetDoc(ref, data, options),
-                    update: (ref: any, data: any) => webUpdateDoc(ref, data),
-                    delete: (ref: any) => webDeleteDoc(ref)
+                    get: async (ref: any) => {
+                        const snap = await webT.get(ref);
+                        return { 
+                            exists: snap.exists(), 
+                            data: () => snap.data(), 
+                            id: snap.id, 
+                            ref 
+                        };
+                    },
+                    set: (ref: any, data: any, options?: any) => webT.set(ref, data, options),
+                    update: (ref: any, data: any) => webT.update(ref, data),
+                    delete: (ref: any) => webT.delete(ref)
                 };
                 return await updateFunction(shimT);
             });
@@ -582,9 +590,51 @@ export class HivePersistence {
         await this.ensureReady();
         const ref = this.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
         await this.setDocCompat(ref, {
+            status: 'queued',
             ...data,
             timestamp: this.fieldValue.serverTimestamp()
         });
+    }
+
+    /**
+     * ATOMIC TASK CLAIMING
+     * Ensures only one worker instance can process a specific interaction task.
+     * Implements idempotency for the Cloud Tasks webhook.
+     */
+    async claimTask(interactionId: string): Promise<{ success: boolean; reason?: string }> {
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+        const txRef = this.collection(COLLECTIONS.TRANSACTIONS).doc(interactionId);
+
+        try {
+            return await this.runAtomic(async (t) => {
+                const [snap, txSnap] = await Promise.all([t.get(ref), t.get(txRef)]);
+                const exists = typeof snap.exists === 'function' ? snap.exists() : snap.exists;
+                
+                if (exists) {
+                    const data = typeof snap.data === 'function' ? snap.data() : snap.data;
+                    if (data && (data.status === 'processing' || data.status === 'completed')) {
+                        return { success: false, reason: 'ALREADY_PROCESSED' };
+                    }
+                }
+
+                // Mark as processing
+                t.set(ref, {
+                    status: 'processing',
+                    startedAt: this.fieldValue.serverTimestamp()
+                }, { merge: true });
+
+                // Update transaction status if it exists
+                if (txSnap.exists) {
+                    t.update(txRef, { status: 'processing' });
+                }
+
+                return { success: true };
+            });
+        } catch (err: any) {
+            logger.error(`[HivePersistence] Failed to claim task ${interactionId}`, err);
+            return { success: false, reason: err.message };
+        }
     }
 
     async getGeneration(interactionId: string): Promise<any> {

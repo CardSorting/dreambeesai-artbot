@@ -59,7 +59,7 @@ export class HiveGenerator {
         }
 
         try {
-            const response = await fetch(endpoint, {
+            const response = await fetch(`${endpoint}/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

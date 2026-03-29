@@ -1,5 +1,26 @@
 import admin from 'firebase-admin';
 import { applicationDefault } from 'firebase-admin/app';
+// Web SDK Imports (Fallback)
+import { initializeApp as initializeWebApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { 
+    getFirestore as getWebFirestore, 
+    doc as webDoc, 
+    getDoc as webGetDoc, 
+    setDoc as webSetDoc, 
+    updateDoc as webUpdateDoc, 
+    deleteDoc as webDeleteDoc, 
+    collection as webCollection, 
+    query as webQuery, 
+    where as webWhere, 
+    limit as webLimit, 
+    orderBy as webOrderBy, 
+    getDocs as webGetDocs, 
+    runTransaction as webRunTransaction, 
+    increment as webIncrement, 
+    serverTimestamp as webServerTimestamp,
+    Timestamp as WebTimestamp
+} from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
 /**
@@ -113,12 +134,98 @@ export const COSTS = Object.freeze({
  */
 export class HivePersistence {
     private adminApp: admin.app.App | null = null;
-    public db!: admin.firestore.Firestore;
+    private webApp: any = null;
+    public db!: any; // Set to either Admin or Web Firestore
     public admin = admin;
+    private isWebSDK = false;
     private memoryCache = new Map<string, { data: any, expires: number }>();
 
+    private initPromise: Promise<void> | null = null;
+
     constructor() {
-        this.initialize();
+        this.initPromise = this.initialize();
+    }
+
+    private async ensureReady() {
+        if (this.initPromise) {
+            await this.initPromise;
+        }
+    }
+
+    // --- SDK Compatibility Shim ---
+    private get doc() {
+        return (path: string, ...pathSegments: string[]) => {
+            if (this.isWebSDK) return webDoc(this.db, path, ...pathSegments);
+            return this.db.doc(`${path}/${pathSegments.join('/')}`);
+        };
+    }
+
+    private get collection() {
+        return (path: string) => {
+            if (this.isWebSDK) {
+                const col = webCollection(this.db, path);
+                return {
+                    doc: (id?: string) => id ? webDoc(this.db, path, id) : webDoc(webCollection(this.db, path)),
+                    where: (field: string, op: any, value: any) => {
+                        // This is a simplified shim for chaining
+                        return {
+                            get: () => webGetDocs(webQuery(col, webWhere(field, op, value)))
+                        };
+                    },
+                    orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => ({
+                        limit: (n: number) => ({
+                            get: () => webGetDocs(webQuery(col, webOrderBy(field, dir), webLimit(n)))
+                        })
+                    }),
+                    limit: (n: number) => ({
+                        get: () => webGetDocs(webQuery(col, webLimit(n)))
+                    }),
+                    get: () => webGetDocs(col),
+                    add: (data: any) => webSetDoc(webDoc(col), data)
+                };
+            }
+            return this.db.collection(path);
+        };
+    }
+
+    private async runTransactionCompat<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
+        if (this.isWebSDK) {
+            return await webRunTransaction(this.db, async (webT) => {
+                const shimT = {
+                    get: (ref: any) => webGetDoc(ref),
+                    set: (ref: any, data: any, options?: any) => webSetDoc(ref, data, options),
+                    update: (ref: any, data: any) => webUpdateDoc(ref, data),
+                    delete: (ref: any) => webDeleteDoc(ref)
+                };
+                return await updateFunction(shimT);
+            });
+        }
+        return await this.db.runTransaction(updateFunction);
+    }
+
+    private get fieldValue() {
+        return {
+            serverTimestamp: () => this.isWebSDK ? webServerTimestamp() : admin.firestore.FieldValue.serverTimestamp(),
+            increment: (n: number) => this.isWebSDK ? webIncrement(n) : admin.firestore.FieldValue.increment(n)
+        };
+    }
+
+    private async getDocCompat(ref: any) {
+        if (this.isWebSDK) {
+            const snap = await webGetDoc(ref);
+            return { exists: snap.exists(), data: () => snap.data(), id: snap.id, ref };
+        }
+        return await ref.get();
+    }
+
+    private async setDocCompat(ref: any, data: any, options: any = {}) {
+        if (this.isWebSDK) return await webSetDoc(ref, data, options);
+        return await ref.set(data, options);
+    }
+
+    private async updateDocCompat(ref: any, data: any) {
+        if (this.isWebSDK) return await webUpdateDoc(ref, data);
+        return await ref.update(data);
     }
 
     // --- Cache Logic ---
@@ -141,8 +248,9 @@ export class HivePersistence {
      * Automatically pre-loads the top 50 most active users into memory on boot.
      */
     async primeWarmCache() {
+        await this.ensureReady();
         try {
-            const snap = await this.db.collection(COLLECTIONS.USERS)
+            const snap = await this.collection(COLLECTIONS.USERS)
                 .orderBy('lastActive', 'desc')
                 .limit(50).get();
             
@@ -155,31 +263,52 @@ export class HivePersistence {
         }
     }
 
-    private initialize() {
+    private async initialize() {
         process.env.GOOGLE_CLOUD_FIRESTORE_TELEMETRY_DISABLED = 'true';
-        // (Config will be injected or accessed via process.env during the Pass 2 refactor)
         const saJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
         const saPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.resolve(process.cwd(), './serviceAccountKey.json');
         const projectId = process.env.GCLOUD_PROJECT || 'dreambees-alchemist';
 
+        // Check for Web SDK / Admin User fallback (Option 4)
+        const webApiKey = process.env.FIREBASE_API_KEY;
+        const webEmail = process.env.FIREBASE_AUTH_EMAIL;
+        const webPass = process.env.FIREBASE_AUTH_PASSWORD;
+
         try {
-            let credential;
-            if (saJson) {
-                credential = admin.credential.cert(JSON.parse(saJson));
-            } else if (fs.existsSync(saPath)) {
-                credential = admin.credential.cert(JSON.parse(fs.readFileSync(saPath, 'utf8')));
-            } else {
-                credential = applicationDefault();
+            // Priority 1: Service Account Key
+            if (saJson || fs.existsSync(saPath)) {
+                let credential;
+                if (saJson) {
+                    credential = admin.credential.cert(JSON.parse(saJson));
+                } else {
+                    credential = admin.credential.cert(JSON.parse(fs.readFileSync(saPath, 'utf8')));
+                }
+                this.adminApp = admin.initializeApp({ credential, projectId });
+                this.db = admin.firestore();
+                logger.info(`[HivePersistence] Connected via Service Account (Project: ${projectId})`);
+            } 
+            // Priority 2: Web SDK Admin User (Fallback)
+            else if (webApiKey && webEmail && webPass) {
+                this.isWebSDK = true;
+                this.webApp = initializeWebApp({
+                    apiKey: webApiKey,
+                    authDomain: process.env.FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
+                    projectId: projectId
+                });
+                
+                const auth = getAuth(this.webApp);
+                await signInWithEmailAndPassword(auth, webEmail, webPass);
+                this.db = getWebFirestore(this.webApp);
+                logger.info(`[HivePersistence] Connected via Admin User: ${webEmail}`);
+            }
+            // Priority 3: Application Default Credentials
+            else {
+                this.adminApp = admin.initializeApp({ credential: applicationDefault(), projectId });
+                this.db = admin.firestore();
+                logger.info(`[HivePersistence] Connected via Application Default Credentials (Project: ${projectId})`);
             }
 
-            if (!admin.apps.length) {
-                this.adminApp = admin.initializeApp({ credential, projectId });
-            } else {
-                this.adminApp = admin.app();
-            }
-            this.db = admin.firestore();
             this.db.settings({ ignoreUndefinedProperties: true });
-            logger.info(`[HivePersistence] Connected to Firestore (Project: ${projectId})`);
         } catch (err: any) {
             logger.error("[HivePersistence] Initialization failed", err);
             throw err;
@@ -188,9 +317,11 @@ export class HivePersistence {
 
     // --- Connectivity & Maintenance ---
     async verifyConnectivity(): Promise<boolean> {
+        await this.ensureReady();
         try {
-            await this.db.collection(COLLECTIONS.HEALTH).doc('connectivity_probe').set({
-                lastChecked: admin.firestore.FieldValue.serverTimestamp(),
+            const ref = this.collection(COLLECTIONS.HEALTH).doc('connectivity_probe');
+            await this.setDocCompat(ref, {
+                lastChecked: this.fieldValue.serverTimestamp(),
                 v: '3.1.0-monolithic',
                 node: process.env.HOSTNAME || 'hive-node'
             });
@@ -209,15 +340,16 @@ export class HivePersistence {
 
     // --- User Operations (Consolidated from users.js) ---
     async getOrCreateUser(discordId: string, discordTag?: string, photoURL?: string | null): Promise<UserProfile> {
+        await this.ensureReady();
         const cached = this.getCached<UserProfile>(`user_${discordId}`);
         if (cached) return cached;
 
-        const userRef = this.db.collection(COLLECTIONS.USERS).doc(discordId);
-        const user = await this.db.runTransaction(async (t) => {
+        const userRef = this.collection(COLLECTIONS.USERS).doc(discordId);
+        const user = await this.runTransactionCompat(async (t) => {
             const snap = await t.get(userRef);
             if (snap.exists) {
                 const data = snap.data() as UserProfile;
-                const updates: any = { lastActive: admin.firestore.FieldValue.serverTimestamp() };
+                const updates: any = { lastActive: this.fieldValue.serverTimestamp() };
                 if (discordTag && data.discordTag !== discordTag) updates.discordTag = discordTag;
                 if (photoURL && data.photoURL !== photoURL) updates.photoURL = photoURL;
                 t.update(userRef, updates);
@@ -225,8 +357,8 @@ export class HivePersistence {
             }
             const newUser: Omit<UserProfile, 'uid'> = {
                 discordId, discordTag, photoURL: photoURL || null,
-                zaps: 100, joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-                lastActive: admin.firestore.FieldValue.serverTimestamp(),
+                zaps: 100, joinedAt: this.fieldValue.serverTimestamp(),
+                lastActive: this.fieldValue.serverTimestamp(),
                 _type: 'discord_native'
             };
             t.set(userRef, newUser);
@@ -239,12 +371,13 @@ export class HivePersistence {
 
     // --- Wallet Operations (Consolidated from WalletService) ---
     async debit(discordId: string, amount: number, txId: string, metadata: any = {}): Promise<{ success: boolean; error?: string }> {
-        const userRef = this.db.collection(COLLECTIONS.USERS).doc(discordId);
-        const txRef = this.db.collection(COLLECTIONS.TRANSACTIONS).doc(txId);
+        await this.ensureReady();
+        const userRef = this.collection(COLLECTIONS.USERS).doc(discordId);
+        const txRef = this.collection(COLLECTIONS.TRANSACTIONS).doc(txId);
         const cleanAmount = toZapPrecision(amount);
 
         try {
-            return await this.db.runTransaction(async (t) => {
+            return await this.runTransactionCompat(async (t) => {
                 const [userSnap, txSnap] = await Promise.all([t.get(userRef), t.get(txRef)]);
                 if (txSnap.exists) return { success: true };
                 if (!userSnap.exists) return { success: false, error: 'User profile not found' };
@@ -252,13 +385,13 @@ export class HivePersistence {
                 const userData = userSnap.data() as UserProfile;
                 if (userData.zaps < cleanAmount) return { success: false, error: 'Insufficient Zaps' };
 
-                t.update(userRef, { zaps: admin.firestore.FieldValue.increment(-cleanAmount) });
+                t.update(userRef, { zaps: this.fieldValue.increment(-cleanAmount) });
                 t.set(txRef, {
                     userId: discordId, 
                     amount: -cleanAmount, 
                     type: 'DEBIT',
                     status: 'pending', 
-                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    timestamp: this.fieldValue.serverTimestamp(),
                     vector: {
                         missionId: txId,
                         category: metadata.category || 'unknown',
@@ -283,18 +416,19 @@ export class HivePersistence {
     }
 
     async refund(txId: string, reason: string): Promise<boolean> {
-        const txRef = this.db.collection(COLLECTIONS.TRANSACTIONS).doc(txId);
+        await this.ensureReady();
+        const txRef = this.collection(COLLECTIONS.TRANSACTIONS).doc(txId);
         try {
-            return await this.db.runTransaction(async (t) => {
+            return await this.runTransactionCompat(async (t) => {
                 const txSnap = await t.get(txRef);
                 if (!txSnap.exists) return false;
                 const txData = txSnap.data() as Transaction;
                 if (txData.status === 'refunded') return true;
 
-                const userRef = this.db.collection(COLLECTIONS.USERS).doc(txData.userId);
+                const userRef = this.collection(COLLECTIONS.USERS).doc(txData.userId);
                 const refundAmount = Math.abs(txData.amount);
-                t.update(userRef, { zaps: admin.firestore.FieldValue.increment(refundAmount) });
-                t.update(txRef, { status: 'refunded', refundReason: reason, refundedAt: admin.firestore.FieldValue.serverTimestamp() });
+                t.update(userRef, { zaps: this.fieldValue.increment(refundAmount) });
+                t.update(txRef, { status: 'refunded', refundReason: reason, refundedAt: this.fieldValue.serverTimestamp() });
                 return true;
             });
         } catch (err) {
@@ -304,9 +438,10 @@ export class HivePersistence {
 
     // --- Lock Operations (Consolidated from locks.js) ---
     async tryLock(discordId: string, ownerId?: string): Promise<boolean> {
-        const lockRef = this.db.collection(COLLECTIONS.LOCKS).doc(discordId);
+        await this.ensureReady();
+        const lockRef = this.collection(COLLECTIONS.LOCKS).doc(discordId);
         try {
-            await this.db.runTransaction(async (t) => {
+            await this.runTransactionCompat(async (t) => {
                 const snap = await t.get(lockRef);
                 if (snap.exists) {
                     const data = snap.data();
@@ -315,7 +450,7 @@ export class HivePersistence {
                 }
                 const expiresAt = new Date();
                 expiresAt.setMinutes(expiresAt.getMinutes() + 5);
-                t.set(lockRef, { ownerId, expiresAt, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+                t.set(lockRef, { ownerId, expiresAt, createdAt: this.fieldValue.serverTimestamp() });
             });
             return true;
         } catch (e: any) {
@@ -324,31 +459,44 @@ export class HivePersistence {
     }
 
     async releaseLock(discordId: string) {
-        await this.db.collection(COLLECTIONS.LOCKS).doc(discordId).delete().catch(() => {});
+        await this.ensureReady();
+        if (this.isWebSDK) {
+            await webDeleteDoc(this.doc(COLLECTIONS.LOCKS, discordId));
+        } else {
+            await this.db.collection(COLLECTIONS.LOCKS).doc(discordId).delete().catch(() => {});
+        }
     }
 
     // --- Thread Operations (Consolidated from threads.js) ---
     async getStudioThreadId(discordId: string, channelId: string): Promise<string | null> {
-        const doc = await this.db.collection(COLLECTIONS.STUDIOS).doc(`${discordId}_${channelId}`).get();
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.STUDIOS).doc(`${discordId}_${channelId}`);
+        const doc = await this.getDocCompat(ref);
         return doc.exists ? doc.data()?.threadId : null;
     }
 
     async setStudioThreadId(discordId: string, channelId: string, threadId: string) {
-        await this.db.collection(COLLECTIONS.STUDIOS).doc(`${discordId}_${channelId}`).set({
-            discordId, channelId, threadId, updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.STUDIOS).doc(`${discordId}_${channelId}`);
+        await this.setDocCompat(ref, {
+            discordId, channelId, threadId, updatedAt: this.fieldValue.serverTimestamp()
         });
     }
 
     // --- Cooldowns (Consolidated from lib/db/cooldowns.js) ---
     async setCooldown(discordId: string, durationMs: number) {
+        await this.ensureReady();
         const expiresAt = new Date(Date.now() + durationMs);
-        await this.db.collection(COLLECTIONS.COOLDOWNS).doc(discordId).set({
-            expiresAt, updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        const ref = this.collection(COLLECTIONS.COOLDOWNS).doc(discordId);
+        await this.setDocCompat(ref, {
+            expiresAt, updatedAt: this.fieldValue.serverTimestamp()
         });
     }
 
     async getRemainingCooldown(discordId: string): Promise<number> {
-        const snap = await this.db.collection(COLLECTIONS.COOLDOWNS).doc(discordId).get();
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.COOLDOWNS).doc(discordId);
+        const snap = await this.getDocCompat(ref);
         if (!snap.exists) return 0;
         const expiresAt = snap.data()?.expiresAt?.toDate()?.getTime() || 0;
         return Math.max(0, expiresAt - Date.now());
@@ -358,11 +506,12 @@ export class HivePersistence {
     async claimDaily(discordId: string, options: { guildId: string }): Promise<{ 
         success: boolean, rewardAmount: number, bonusAmount: number, newStreak: number, newBalance: number 
     }> {
-        const userRef = this.db.collection(COLLECTIONS.USERS).doc(discordId);
+        await this.ensureReady();
+        const userRef = this.collection(COLLECTIONS.USERS).doc(discordId);
         const { available, nextReset } = await this.isDailyRewardAvailable(discordId);
         if (!available) throw new Error(`You have already claimed your honey today! Next harvest: <t:${Math.floor(nextReset / 1000)}:R>`);
 
-        return await this.db.runTransaction(async (t) => {
+        return await this.runTransactionCompat(async (t) => {
             const userSnap = await t.get(userRef);
             if (!userSnap.exists) throw new Error('Hive resident not found');
             const userData = userSnap.data() as UserProfile;
@@ -376,13 +525,17 @@ export class HivePersistence {
             const dateId = `claim_${now.getUTCFullYear()}_${now.getUTCMonth() + 1}_${now.getUTCDate()}`;
 
             t.update(userRef, { 
-                zaps: admin.firestore.FieldValue.increment(totalReward),
+                zaps: this.fieldValue.increment(totalReward),
                 claimStreak: streak,
-                lastFreeClaimAt: admin.firestore.FieldValue.serverTimestamp()
+                lastFreeClaimAt: this.fieldValue.serverTimestamp()
             });
 
-            t.set(userRef.collection('claims').doc(dateId), {
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            const claimRef = this.isWebSDK 
+                ? webDoc(this.collection(COLLECTIONS.USERS).doc(discordId), 'claims', dateId)
+                : userRef.collection('claims').doc(dateId);
+
+            t.set(claimRef, {
+                timestamp: this.fieldValue.serverTimestamp(),
                 reward: totalReward, bonus, streak, guildId: options.guildId
             });
 
@@ -398,9 +551,15 @@ export class HivePersistence {
 
     // --- Claim Status (Consolidated from status.js) ---
     async isDailyRewardAvailable(discordId: string): Promise<{ available: boolean, nextReset: number }> {
+        await this.ensureReady();
         const now = new Date();
         const dateId = `claim_${now.getUTCFullYear()}_${now.getUTCMonth() + 1}_${now.getUTCDate()}`;
-        const claimSnap = await this.db.collection(COLLECTIONS.USERS).doc(discordId).collection('claims').doc(dateId).get();
+        
+        const claimRef = this.isWebSDK
+            ? webDoc(this.collection(COLLECTIONS.USERS).doc(discordId), 'claims', dateId)
+            : this.db.collection(COLLECTIONS.USERS).doc(discordId).collection('claims').doc(dateId);
+            
+        const claimSnap = await this.getDocCompat(claimRef);
         
         const nextReset = new Date();
         nextReset.setUTCHours(24, 0, 0, 0);
@@ -413,32 +572,45 @@ export class HivePersistence {
 
     // --- Generation Records (Consolidated from lib/db/generations.js) ---
     async saveGeneration(interactionId: string, data: any) {
-        await this.db.collection(COLLECTIONS.GENERATIONS).doc(interactionId).set({
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+        await this.setDocCompat(ref, {
             ...data,
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
+            timestamp: this.fieldValue.serverTimestamp()
         });
     }
 
     async getGeneration(interactionId: string): Promise<any> {
-        const snap = await this.db.collection(COLLECTIONS.GENERATIONS).doc(interactionId).get();
+        await this.ensureReady();
+        const ref = this.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+        const snap = await this.getDocCompat(ref);
         return snap.exists ? snap.data() : null;
     }
 
     // --- Recovery Operations (Consolidated from recovery.js) ---
     async recoverZombies(): Promise<number> {
+        await this.ensureReady();
         const STALE_THRESHOLD = 10 * 60 * 1000;
         const staleTime = new Date(Date.now() - STALE_THRESHOLD);
-        const snap = await this.db.collection(COLLECTIONS.TRANSACTIONS)
+        
+        const snap = await this.collection(COLLECTIONS.TRANSACTIONS)
             .where('status', '==', 'pending')
-            .where('timestamp', '<', staleTime)
+            // Note: complex queries might fail with Web SDK if indexes aren't there, 
+            // but we'll try to keep it simple.
+            // .where('timestamp', '<', staleTime) 
             .limit(50).get();
 
         if (snap.empty) return 0;
         let count = 0;
         for (const doc of snap.docs) {
-            const finished = await this.db.collection(COLLECTIONS.GENERATIONS).doc(doc.id).get();
+            const data = doc.data();
+            // Filter stale manually for safety if where fails
+            if (data.timestamp?.toDate?.() > staleTime) continue;
+
+            const genRef = this.collection(COLLECTIONS.GENERATIONS).doc(doc.id);
+            const finished = await this.getDocCompat(genRef);
             if (finished.exists) {
-                await doc.ref.update({ status: 'completed' });
+                await this.updateDocCompat(doc.ref, { status: 'completed' });
             } else {
                 await this.refund(doc.id, 'Zombie Recovery');
                 count++;
@@ -451,8 +623,9 @@ export class HivePersistence {
      * PILLAR RESILIENCE: Atomic Wrapper
      * Ensures multi-document mutations are wrapped in a single transaction.
      */
-    async runAtomic<T>(op: (t: admin.firestore.Transaction) => Promise<T>): Promise<T> {
-        return await this.db.runTransaction(op);
+    async runAtomic<T>(op: (t: any) => Promise<T>): Promise<T> {
+        await this.ensureReady();
+        return await this.runTransactionCompat(op);
     }
 
     /**
@@ -468,32 +641,33 @@ export class HivePersistence {
         action: string,
         strikeWeight?: number
     }) {
+        await this.ensureReady();
         const { userId, userTag, guildId, originalPrompt, matchedTerm, action, strikeWeight = 1 } = data;
         
         return await this.runAtomic(async (t) => {
-            const userRef = this.db.collection(COLLECTIONS.USERS).doc(userId);
+            const userRef = this.collection(COLLECTIONS.USERS).doc(userId);
             const userSnap = await t.get(userRef);
             
             if (!userSnap.exists) {
                 const newUser: Omit<UserProfile, 'uid'> = {
                     discordId: userId, discordTag: userTag, photoURL: null,
-                    zaps: 100, joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    lastActive: admin.firestore.FieldValue.serverTimestamp(),
+                    zaps: 100, joinedAt: this.fieldValue.serverTimestamp(),
+                    lastActive: this.fieldValue.serverTimestamp(),
                     _type: 'discord_native'
                 };
                 t.set(userRef, newUser);
             }
 
-            const logRef = this.db.collection('moderation_logs').doc();
+            const logRef = this.collection('moderation_logs').doc();
             t.set(logRef, {
                 ...data,
                 strikeWeight,
-                timestamp: admin.firestore.FieldValue.serverTimestamp()
+                timestamp: this.fieldValue.serverTimestamp()
             });
 
             t.update(userRef, {
-                abuseStrikes: admin.firestore.FieldValue.increment(strikeWeight),
-                lastStrikeAt: admin.firestore.FieldValue.serverTimestamp()
+                abuseStrikes: this.fieldValue.increment(strikeWeight),
+                lastStrikeAt: this.fieldValue.serverTimestamp()
             });
 
             return strikeWeight;

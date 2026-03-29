@@ -14,9 +14,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# Copy source and prune
+# Copy source and Build
 COPY . .
-RUN npm prune --production \
+RUN npm run build \
+    && npm prune --production \
     && find node_modules -name "*.map" -type f -delete \
     && find node_modules -name "README*" -type f -delete \
     && find node_modules -name "LICENSE*" -type f -delete \
@@ -49,11 +50,9 @@ ENV NODE_ENV=production
 ENV SHARP_CACHE_DIR=/tmp/.sharp-cache
 
 # [ISOLATION] Copy only the essential runtime artifacts
-# We DO NOT copy npm or the builder's cache into the final stage
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
-COPY --from=builder /app/index.js ./
-COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/commands ./commands
 COPY --from=builder /app/interactions ./interactions
 
@@ -64,7 +63,6 @@ USER node
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # [RUNTIME] Start the bot with performance-tuned GC settings
-# This ensures the bot stays within GCE e2-small memory limits (2GB)
-CMD ["node", "--max-old-space-size=1536", "index.js"]
+CMD ["node", "--max-old-space-size=1536", "dist/index.js"]
 
 EXPOSE 8080

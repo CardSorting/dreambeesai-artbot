@@ -3,14 +3,16 @@
  * Provides uniform JSON logging for easier ingestion by Cloud Logging / Datadog / etc.
  */
 
-const levels = {
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+const levels: Record<LogLevel, number> = {
     DEBUG: 0,
     INFO: 1,
     WARN: 2,
     ERROR: 3
 };
 
-const currentLevel = process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG');
+const currentLevel = (process.env.LOG_LEVEL as LogLevel) || (process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG');
 const reset = '\x1b[0m';
 
 const SECRET_KEYS = [
@@ -22,7 +24,7 @@ const SECRET_KEYS = [
 /**
  * Robust Data Scrubbing with Circular Reference Safety and Depth Limit
  */
-function scrubData(data, depth = 0, maxDepth = 5, visited = new WeakSet()) {
+function scrubData(data: any, depth = 0, maxDepth = 5, visited = new WeakSet()): any {
     if (depth >= maxDepth) return '[DEPTH_LIMIT_REACHED]';
     if (!data || typeof data !== 'object') return data;
     
@@ -31,7 +33,7 @@ function scrubData(data, depth = 0, maxDepth = 5, visited = new WeakSet()) {
     visited.add(data);
 
     const isArray = Array.isArray(data);
-    const scrubbed = isArray ? [] : {};
+    const scrubbed = isArray ? [] : {} as any;
     
     if (isArray) {
         for (let i = 0; i < data.length; i++) {
@@ -55,22 +57,29 @@ function scrubData(data, depth = 0, maxDepth = 5, visited = new WeakSet()) {
     return scrubbed;
 }
 
-export function createLogger(baseContext = {}) {
-    function log(level, message, data = {}) {
+export interface LoggerContext {
+    traceId?: string;
+    [key: string]: any;
+}
+
+export class Logger {
+    constructor(private baseContext: LoggerContext = {}) {}
+
+    private log(level: LogLevel, message: string, data: any = {}) {
         if (levels[level] < levels[currentLevel]) return;
 
         const scrubbedData = scrubData(data);
-        const payload = {
+        const payload: any = {
             timestamp: new Date().toISOString(),
             level,
             message,
-            ...scrubData(baseContext),
+            ...scrubData(this.baseContext),
             ...scrubbedData
         };
 
         // EXTREME HARDENING: Auto-inject trace_id if present in context
-        if (baseContext.traceId) {
-            payload.trace_id = baseContext.traceId;
+        if (this.baseContext.traceId) {
+            payload.trace_id = this.baseContext.traceId;
         }
 
         // Handle error objects
@@ -86,20 +95,28 @@ export function createLogger(baseContext = {}) {
         } else {
             const color = level === 'ERROR' ? '\x1b[31m' : level === 'WARN' ? '\x1b[33m' : '\x1b[36m';
             const traceSuffix = payload.trace_id ? ` [tr:${payload.trace_id}]` : '';
-            process.stdout.write(`${color}[${level}]${reset} ${payload.timestamp} | ${message}${traceSuffix} ${Object.keys(data).length > 0 ? JSON.stringify(data) : ''}\n`);
+            // Don't stringify Error objects in console output to avoid clutter, but show their message
+            const dataToPrint = data instanceof Error ? { message: data.message } : data;
+            process.stdout.write(`${color}[${level}]${reset} ${payload.timestamp} | ${message}${traceSuffix} ${Object.keys(dataToPrint).length > 0 ? JSON.stringify(dataToPrint) : ''}\n`);
         }
     }
 
-    return {
-        trace: (msg, data) => log('DEBUG', msg, data), // Added for diagnostic verbosity
-        debug: (msg, data) => log('DEBUG', msg, data),
-        info: (msg, data) => log('INFO', msg, data),
-        warn: (msg, data) => log('WARN', msg, data),
-        error: (msg, data) => log('ERROR', msg, data),
-        child: (extraContext) => createLogger({ ...baseContext, ...extraContext }),
-        // Convenience for generating a fresh trace ID
-        withTrace: (traceId) => createLogger({ ...baseContext, traceId: traceId || `tr_${Date.now()}_${Math.random().toString(36).substring(7)}` })
-    };
+    trace(msg: string, data?: any) { this.log('DEBUG', msg, data); }
+    debug(msg: string, data?: any) { this.log('DEBUG', msg, data); }
+    info(msg: string, data?: any) { this.log('INFO', msg, data); }
+    warn(msg: string, data?: any) { this.log('WARN', msg, data); }
+    error(msg: string, data?: any) { this.log('ERROR', msg, data); }
+
+    child(extraContext: LoggerContext): Logger {
+        return new Logger({ ...this.baseContext, ...extraContext });
+    }
+
+    withTrace(traceId?: string): Logger {
+        return new Logger({ 
+            ...this.baseContext, 
+            traceId: traceId || `tr_${Date.now()}_${Math.random().toString(36).substring(7)}` 
+        });
+    }
 }
 
-export const logger = createLogger();
+export const logger = new Logger();

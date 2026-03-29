@@ -195,7 +195,8 @@ export class HivePersistence {
                 node: process.env.HOSTNAME || 'hive-node'
             });
             return true;
-        } catch (err) {
+        } catch (err: any) {
+            logger.error(`[HivePersistence] Connectivity check failed`, { error: err.message });
             return false;
         }
     }

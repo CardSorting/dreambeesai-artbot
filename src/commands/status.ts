@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from "discord.js";
 import { hivePersistence } from "../services/HivePersistence.js";
 import { HiveUX, HiveProxyInteraction } from "../core/HiveUX.js";
 import { Command, CommandContext } from "../core/HiveEngine.js";
+/**
  * Displays the user's current Zap balance, streak, and reward availability.
  */
 export const status: Command = {

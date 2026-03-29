@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from "discord.js";
 import { hivePersistence } from "../services/HivePersistence.js";
 import { HiveUX, HiveProxyInteraction, Voice } from "../core/HiveUX.js";
 import { Command, CommandContext } from "../core/HiveEngine.js";
+/**
  * Allows users to claim their daily Zap reward with streak tracking.
  */
 export const claim: Command = {

@@ -6,8 +6,6 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import sharp from 'sharp';
 import pLimit from 'p-limit';
-import { OAuth2Client } from 'google-auth-library';
-import { CloudTasksClient } from '@google-cloud/tasks';
 import { HiveGenerator, GenerationTask } from '../services/HiveGenerator.js';
 
 /**
@@ -74,7 +72,6 @@ const __dirname = path.dirname(__filename);
 const logger = new Logger();
 const imageLimit = pLimit(Number(process.env.IMAGE_CONCURRENCY) || 4);
 const workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
-const cloudTasksClient = new CloudTasksClient();
 
 sharp.cache(false);
 
@@ -120,7 +117,6 @@ export class HiveEngine {
     private interactionHandlers = new Collection<string, any>();
     private isInitialized = false;
     private startTime = Date.now();
-    private authClient = new OAuth2Client();
     private hiveGenerator = new HiveGenerator();
 
     // Circuit Breaker State (Monitored Layer)
@@ -189,20 +185,15 @@ export class HiveEngine {
             DREAMBEES_API_URL: process.env.DREAMBEES_API_URL || '',
             DREAMBEES_API_KEY: process.env.DREAMBEES_API_KEY || '',
             DREAMBEES_GUILD_ID: process.env.DREAMBEES_GUILD_ID || '',
-            GCLOUD_PROJECT: process.env.GCLOUD_PROJECT || '',
-            CLOUD_TASKS_LOCATION: process.env.CLOUD_TASKS_LOCATION || '',
-            CLOUD_TASKS_QUEUE: process.env.CLOUD_TASKS_QUEUE || '',
-            TASK_WEBHOOK_URL: process.env.TASK_WEBHOOK_URL || '',
             NODE_ENV: process.env.NODE_ENV || 'development',
             PORT: process.env.PORT || '8080',
             FIREBASE_SERVICE_ACCOUNT_JSON: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
-            CLOUD_TASKS_SA_EMAIL: process.env.CLOUD_TASKS_SA_EMAIL,
             INVITE_LINK: process.env.INVITE_LINK || 'https://discord.com/invite/curMHRAN8y'
         };
     }
 
     private validateConfig() {
-        const required = ['DISCORD_TOKEN', 'DREAMBEES_API_URL', 'GCLOUD_PROJECT', 'TASK_WEBHOOK_URL'];
+        const required = ['DISCORD_TOKEN', 'DREAMBEES_API_URL'];
         const missing = required.filter(k => !(this.config as any)[k]);
         if (missing.length > 0) {
             logger.error(`FATAL: Missing environment variables: ${missing.join(', ')}`);
@@ -542,69 +533,30 @@ export class HiveEngine {
         }
     }
 
-    // --- Processor logic (Consolidated from GenerationService) ---
+    // --- Processor logic (Direct Asynchronous Execution) ---
     async enqueueGeneration(payload: any) {
         if (this.isCircuitOpen('generation')) {
             throw new Error('SYSTEM_DEGRADED: Generation service temporarily offline.');
         }
 
-        const project = this.config.GCLOUD_PROJECT;
-        const location = this.config.CLOUD_TASKS_LOCATION;
-        const queue = this.config.CLOUD_TASKS_QUEUE;
-        const url = this.config.TASK_WEBHOOK_URL;
-        
+        // Save the metadata to the hive for later retrieval
         await hivePersistence.saveGeneration(payload.interactionId, payload);
 
-        try {
-            if (!project || !location || !queue || !url) {
-                throw new Error("Cloud Tasks Configuration Missing");
-            }
-
-            const parent = cloudTasksClient.queuePath(project, location, queue);
-            const task = {
-                httpRequest: {
-                    httpMethod: 'POST' as const,
-                    url: url,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: Buffer.from(JSON.stringify(payload)).toString('base64'),
-                    oidcToken: {
-                        serviceAccountEmail: this.config.CLOUD_TASKS_SA_EMAIL || `${project}@appspot.gserviceaccount.com`,
-                        audience: url
-                    },
-                },
-            };
-
-            const createTaskPromise = cloudTasksClient.createTask({ parent, task });
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error("Connection Timeout")), 4000);
-            });
-
-            await Promise.race([createTaskPromise, timeoutPromise]);
-            logger.info(`[HIVE] Enqueued mission to Cloud Tasks: ${payload.interactionId}`);
-        } catch (err: any) {
-            logger.warn(`[HIVE] Cloud Tasks Error: ${err.message}. Falling back to direct Modal execution for ${payload.interactionId}`);
-            
-            // Simulate webhook claim and execute
-            try {
-                const claim = await hivePersistence.claimTask(payload.interactionId);
-                if (claim.success) {
-                    this.executeGeneration(payload).catch(execErr => {
-                        logger.error(`[WORKER] Direct Execution Failed: ${payload.interactionId}`, execErr);
-                    });
-                }
-            } catch (claimErr: any) {
-                 logger.error(`[WORKER] Failed to claim task for fallback execution: ${payload.interactionId}`, claimErr);
-            }
-        }
+        // Immediate background execution of the mission
+        logger.info(`[HIVE] Dispatching mission to local worker: ${payload.interactionId}`);
+        
+        // Non-blocking background call to simulate queue processing logic
+        this.executeGeneration(payload).catch(err => {
+            logger.error(`[WORKER] Local background mission failed: ${payload.interactionId}`, err);
+        });
     }
 
     // --- Server & Maintenance ---
     private initializeServer() {
         this.server = http.createServer(async (req, res) => {
             const url = new URL(req.url || '/', `http://${req.headers.host}`);
-        if (url.pathname === '/healthz') return this.handleHealthCheck(res);
-        if (req.method === 'POST' && url.pathname === '/tasks/process-generation') return this.handleTaskWebhook(req, res);
-        res.writeHead(404).end();
+            if (url.pathname === '/healthz') return this.handleHealthCheck(res);
+            res.writeHead(404).end();
         });
         this.server.listen(this.config.PORT || 8080);
     }
@@ -624,77 +576,6 @@ export class HiveEngine {
         return false;
     }
 
-    private async handleTaskWebhook(req: http.IncomingMessage, res: http.ServerResponse) {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', async () => {
-            try {
-                // 1. OIDC Identity Verification
-                const isDevelopment = this.config.NODE_ENV === 'development';
-                const authHeader = req.headers['authorization'];
-                
-                if (isDevelopment && !authHeader) {
-                    logger.info('[WORKER] Dev Mode: Bypassing OIDC verification');
-                } else {
-                    if (!authHeader?.startsWith('Bearer ')) {
-                        logger.warn('[WORKER] Missing OIDC Token');
-                        res.writeHead(401).end('Unauthorized');
-                        return;
-                    }
-
-                    const idToken = authHeader.split(' ')[1];
-                    // Normalize audience: match exactly what Cloud Tasks sends or what's in config
-                    // We also strip trailing slashes to avoid common configuration mismatches
-                    const configAudience = this.config.TASK_WEBHOOK_URL.replace(/\/$/, '');
-                    
-                    try {
-                        const ticket = await this.authClient.verifyIdToken({
-                            idToken,
-                            audience: [configAudience, this.config.TASK_WEBHOOK_URL]
-                        });
-                        
-                        const payload = ticket.getPayload();
-                        if (process.env.NODE_ENV === 'production' && this.config.CLOUD_TASKS_SA_EMAIL) {
-                            if (payload?.email !== this.config.CLOUD_TASKS_SA_EMAIL) {
-                                throw new Error(`Identity Mismatch: Expected ${this.config.CLOUD_TASKS_SA_EMAIL}, got ${payload?.email}`);
-                            }
-                        }
-                    } catch (oidcErr: any) {
-                        logger.error('[WORKER] Auth Failure', { 
-                            error: oidcErr.message,
-                            configuredAudience: configAudience,
-                            env: process.env.NODE_ENV
-                        });
-                        res.writeHead(403).end(`Forbidden: ${oidcErr.message}`);
-                        return;
-                    }
-                }
-
-                // 2. Process Payload
-                const payload = JSON.parse(body) as GenerationTask;
-                
-                // 3. Atomic Task Claim (Idempotency)
-                const claim = await hivePersistence.claimTask(payload.interactionId);
-                if (!claim.success) {
-                    logger.info(`[WORKER] Idempotency Intercept: ${payload.interactionId} (${claim.reason})`);
-                    res.writeHead(200).end(JSON.stringify({ status: 'already_processing_or_completed' }));
-                    return;
-                }
-
-                logger.info(`[WORKER] Hive Task Claimed: ${payload.interactionId}`);
-                
-                // 4. Background Execution
-                this.executeGeneration(payload).catch(err => {
-                    logger.error(`[WORKER] Background Mission Failed: ${payload.interactionId}`, err);
-                });
-                
-                res.writeHead(200).end(JSON.stringify({ status: 'queued_for_processing' }));
-            } catch (err: any) {
-                logger.error(`[WORKER] Webhook Pipeline Error`, err);
-                res.writeHead(400).end(JSON.stringify({ error: 'Invalid Payload' }));
-            }
-        });
-    }
 
     /**
      * WORKER PIPELINE: The Hive's active labor force.

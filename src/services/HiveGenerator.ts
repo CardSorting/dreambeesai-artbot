@@ -13,6 +13,9 @@ export interface GenerationTask {
     channelId: string;
     guildId?: string;
     createdAt: number;
+    imageUrl?: string; // Passed when Remix is active
+    numSteps?: number; // Configurable for edit intensity
+    count?: number; // For vibe grids
 }
 
 export interface GenerationResult {
@@ -36,10 +39,12 @@ export interface ModalResponse {
 export class HiveGenerator {
     private zitEndpoint: string;
     private sdxlEndpoint: string;
+    private fluxEndpoint: string;
 
     constructor() {
         this.zitEndpoint = process.env.MODAL_ZIT_ENDPOINT || '';
         this.sdxlEndpoint = process.env.MODAL_SDXL_ENDPOINT || '';
+        this.fluxEndpoint = process.env.MODAL_FLUX_ENDPOINT || '';
     }
 
     /**
@@ -92,6 +97,96 @@ export class HiveGenerator {
     }
 
     /**
+     * REMIX: Async Polling image-to-image loop targeting FLUX-Klein.
+     * Supports concurrent generation (count) by firing up parallel Modal containers.
+     */
+    async remix(task: GenerationTask, imageUrl: string): Promise<GenerationResult> {
+        if (!this.fluxEndpoint) {
+            throw new Error('MODAL_FLUX_ENDPOINT missing or not configured');
+        }
+
+        const count = task.count || 1;
+        const numSteps = task.numSteps || 10;
+        const promises = [];
+
+        // Spin up N overlapping requests and track results natively
+        for (let i = 0; i < count; i++) {
+            promises.push(this.submitAndPollRemix(task.prompt, imageUrl, numSteps, i));
+        }
+
+        try {
+            const results = await Promise.all(promises);
+            return {
+                interactionId: task.interactionId,
+                images: results,
+                modelId: 'flux-klein-4b',
+                status: 'completed'
+            };
+        } catch (error: any) {
+            return {
+                interactionId: task.interactionId,
+                images: [],
+                modelId: 'flux-klein-4b',
+                status: 'failed',
+                error: error.message
+            };
+        }
+    }
+
+    private async submitAndPollRemix(prompt: string, image: string, num_steps: number, seedModifier: number): Promise<string> {
+        // 1. Submit Edit Job
+        const submitResponse = await fetch(`${this.fluxEndpoint}/edit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt,
+                image,
+                num_steps,
+                seed: 42 + seedModifier // Mutate seed slightly for grids
+            })
+        });
+
+        if (!submitResponse.ok) {
+            const text = await submitResponse.text().catch(() => '');
+            throw new Error(`AI Edit API failed with status ${submitResponse.status}: ${text}`);
+        }
+
+        const data = (await submitResponse.json()) as any;
+        if (!data.job_id) {
+            throw new Error('AI Model did not return a job_id');
+        }
+
+        // 2. Polling Loop
+        let attempts = 0;
+        while (attempts < 60) { // Max 2 mins wait
+            await new Promise(r => setTimeout(r, 2000));
+            
+            const pollResponse = await fetch(`${this.fluxEndpoint}/result/${data.job_id}`);
+            
+            // If it's the image buffer directly (completed)
+            if (pollResponse.ok && pollResponse.headers.get('content-type')?.includes('image')) {
+                const arrayBuffer = await pollResponse.arrayBuffer();
+                return Buffer.from(arrayBuffer).toString('base64');
+            }
+
+            // If it's a JSON status message
+            if (pollResponse.ok && pollResponse.headers.get('content-type')?.includes('json')) {
+                const statusData = await pollResponse.json() as any;
+                if (statusData.status === 'failed') {
+                    throw new Error(statusData.error || 'Job failed during generation.');
+                }
+                if (statusData.status === 'completed' && statusData.result) {
+                    return Buffer.from(statusData.result, 'hex').toString('base64');
+                }
+                // 'generating' or 'queued', just continue polling
+            }
+            attempts++;
+        }
+
+        throw new Error('Generation timed out polling FLUX API');
+    }
+
+    /**
      * STITCH: Combine multiple buffers into a single 2x2 grid.
      * Formerly in ImageProcessor.
      */
@@ -112,6 +207,11 @@ export class HiveGenerator {
                 background: { r: 0, g: 0, b: 0, alpha: 1 }
             }
         });
+
+        // If only 1 buffer, just wrap it alone
+        if (buffers.length === 1) {
+            return sharp(buffers[0]).webp().toBuffer();
+        }
 
         const composites = buffers.slice(0, 4).map((buf, index) => ({
             input: buf,

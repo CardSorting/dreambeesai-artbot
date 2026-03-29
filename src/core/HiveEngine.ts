@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Collection, Events, ActivityType, Interaction, AttachmentBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, Events, ActivityType, Interaction, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ModalSubmitInteraction } from 'discord.js';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -235,14 +235,22 @@ export class HiveEngine {
                 const command = this.commands.get(interaction.commandName);
                 if (!command) return;
                 await command.execute(hiveInteraction, { logger: ctxLogger, jobs: this.activeJobs, signal: controller.signal, engine: this });
-            } else if (interaction.isButton()) {
-                await this.handleButton(hiveInteraction, controller.signal);
-            } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
+            } else if (interaction.isButton() || interaction.isMessageComponent() || interaction.isModalSubmit()) {
                 const customId = (interaction as any).customId;
-                const prefix = Array.from(this.interactionHandlers.keys()).find(p => customId.startsWith(p));
-                if (prefix) {
-                    const handler = this.interactionHandlers.get(prefix);
-                    await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: this.activeJobs, signal: controller.signal });
+
+                if (customId.startsWith('remix_') || customId.startsWith('modal_remix_')) {
+                    await this.handleRemixInteraction(hiveInteraction, customId, controller.signal);
+                    return;
+                }
+
+                if (interaction.isButton()) {
+                    await this.handleButton(hiveInteraction, controller.signal);
+                } else {
+                    const prefix = Array.from(this.interactionHandlers.keys()).find(p => customId.startsWith(p));
+                    if (prefix) {
+                        const handler = this.interactionHandlers.get(prefix);
+                        await handler.execute(hiveInteraction, { logger: ctxLogger, jobs: this.activeJobs, signal: controller.signal });
+                    }
                 }
             }
         } finally {
@@ -396,6 +404,141 @@ export class HiveEngine {
                 await interaction.reply({ content: '⚠️ Could not delete message.', ephemeral: true });
             }
         }
+
+        // 3. REMIX Handler (now handled centrally in handleInteraction)
+    }
+
+    private async handleRemixInteraction(interaction: HiveProxyInteraction, customId: string, signal: AbortSignal) {
+        const parts = customId.split('_');
+        
+        // Handle native text input modal submissions
+        if (customId.startsWith('modal_remix_')) {
+            const originalInteractionId = parts[2];
+            const imageIndex = parseInt(parts[3], 10);
+            const newPrompt = (interaction.interaction as ModalSubmitInteraction).fields.getTextInputValue('prompt');
+            await this.dispatchRemixJob(interaction, originalInteractionId, imageIndex, newPrompt, 1, 10);
+            return;
+        }
+
+        const action = parts[1]; // upscale | vibegrid | vibe | tools
+        const originalInteractionId = parts[2];
+        const imageIndex = parseInt(parts[3], 10);
+        const modifier = parts.length > 4 ? parts[4] : null; 
+
+        // INTERCEPT MANUAL REMIX - SHOW DISCORD MODAL
+        if (action === 'upscale') {
+            const data = await hivePersistence.getGeneration(originalInteractionId);
+            if (!data) return await interaction.reply({ content: '❌ Data expired.', ephemeral: true });
+
+            const modal = new ModalBuilder()
+                .setCustomId(`modal_remix_${originalInteractionId}_${imageIndex}`)
+                .setTitle('Manual Remix');
+                
+            const promptInput = new TextInputBuilder()
+                .setCustomId('prompt')
+                .setLabel('Evolution Directives (Edit Prompt)')
+                .setStyle(TextInputStyle.Paragraph)
+                .setValue(data.prompt || '')
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(promptInput));
+            return await (interaction.interaction as any).showModal(modal);
+        } 
+
+        // For string select menus (tools), get the value from the interaction
+        let toolValue: string | null = modifier;
+        if (interaction.interaction.isStringSelectMenu()) {
+             toolValue = (interaction.interaction as any).values[0];
+        }
+
+        await interaction.defer({ ephemeral: true });
+
+        try {
+            const data = await hivePersistence.getGeneration(originalInteractionId);
+            if (!data || !data.urls?.[imageIndex]) {
+                return await interaction.reply({ content: '❌ Image source expired or not found in the hive.' });
+            }
+
+            const imageUrl = data.urls[imageIndex];
+            let newPrompt = data.prompt;
+            let dispatchCount = action === 'vibegrid' ? 4 : 1;
+            let dispatchSteps = 10;
+
+            // Apply standard vibe modifiers
+            if (action === 'vibe' && modifier) {
+                const styles: Record<string, string> = {
+                    cyberpunk: "neon, cyberpunk, highly detailed, sci-fi",
+                    studio: "professional studio photography, high end retouching, 8k",
+                    anime: "anime masterpiece, makoto shinkai style, vibrant colors",
+                    dark: "dark fantasy, grimdark, volumetric lighting, moody"
+                };
+                newPrompt = `${newPrompt}, ${styles[modifier] || modifier}`;
+            }
+
+            // Apply advanced tools modifiers
+            if (action === 'tools' && toolValue) {
+                const tools: Record<string, string> = {
+                    genius: "highly creative genius concept, surreal, magical, masterpiece",
+                    summon_prism: "mythical realm, prismatic crystals, rainbow lighting, god rays",
+                    strength_low: "subtle exact features",
+                };
+                newPrompt = `${newPrompt}, ${tools[toolValue] || toolValue}`;
+                if (toolValue === 'strength_low') {
+                    dispatchSteps = 4; // Fewer steps for less distortion
+                }
+            }
+
+            await this.dispatchRemixJob(interaction, originalInteractionId, imageIndex, newPrompt, dispatchCount, dispatchSteps, imageUrl);
+
+        } catch (err: any) {
+            logger.error(`Remix logic failed`, err);
+            await interaction.reply({ content: `❌ **Remix Error:** ${err.message}` });
+        }
+    }
+
+    private async dispatchRemixJob(interaction: HiveProxyInteraction, originalInteractionId: string, imageIndex: number, newPrompt: string, count: number, numSteps: number, cachedImageUrl?: string) {
+        if (!interaction.interaction.deferred && !interaction.interaction.replied) {
+            await interaction.defer({ ephemeral: true });
+        }
+
+        try {
+            let imageUrl = cachedImageUrl;
+            if (!imageUrl) {
+                const data = await hivePersistence.getGeneration(originalInteractionId);
+                imageUrl = data?.urls?.[imageIndex];
+            }
+            if (!imageUrl) throw new Error('Could not resolve image URL for Remix.');
+
+            const mission: MissionProfile = {
+                category: "Remix",
+                description: "Universal Modal Edit Request",
+                cost: 6 * count, // vibes grid costs more!
+                prompt: newPrompt,
+                safetyDepth: 'STANDARD'
+            };
+
+            await this.orchestrate(interaction, mission, async (ab) => {
+                const payload: GenerationTask = {
+                    interactionId: interaction.id,
+                    prompt: mission.prompt!,
+                    modelId: 'flux-klein-4b',
+                    discordId: interaction.user.id,
+                    channelId: interaction.channel!.id,
+                    guildId: interaction.guildId || undefined,
+                    createdAt: Date.now(),
+                    imageUrl,
+                    count,
+                    numSteps
+                };
+
+                await this.enqueueGeneration(payload);
+                await interaction.reply(HiveUX.createSuccessEmbed("Remix Enqueued!", "Your hive worker is fetching nectars and compiling visions..."));
+            });
+
+        } catch (err: any) {
+            logger.error(`Remix dispatch failed`, err);
+            await interaction.reply({ content: `❌ **Remix Error:** ${err.message}` });
+        }
     }
 
     // --- Processor logic (Consolidated from GenerationService) ---
@@ -506,9 +649,15 @@ export class HiveEngine {
         const { interactionId, discordId, channelId } = task;
         
         try {
-            // 1. GENERATION: Generate via AI Model
+            // 1. GENERATION: Generate via AI Model or Remix via Modal Edit
             logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
-            const result = await this.hiveGenerator.generate(task);
+            
+            let result;
+            if (task.imageUrl) {
+                result = await this.hiveGenerator.remix(task, task.imageUrl);
+            } else {
+                result = await this.hiveGenerator.generate(task);
+            }
 
             if (result.status === 'failed') {
                 throw new Error(result.error || 'AI Generation Failed');

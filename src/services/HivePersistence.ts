@@ -2,8 +2,62 @@ import admin from 'firebase-admin';
 import { applicationDefault } from 'firebase-admin/app';
 import fs from 'fs';
 import path from 'path';
-import { Logger } from '../core/Logger.js';
-import { UserProfile, Transaction } from '../models/index.js';
+/**
+ * PILLAR MODEL: UserProfile
+ */
+export interface UserProfile {
+    uid: string;
+    discordId: string;
+    discordTag?: string;
+    photoURL?: string | null;
+    zaps: number;
+    joinedAt: any; // Firestore Timestamp
+    lastActive: any; // Firestore Timestamp
+    lastTransactionTime?: any;
+    claimStreak?: number;
+    lastFreeClaimAt?: any;
+    abuseStrikes?: number;
+    lastStrikeAt?: any;
+    _type?: string;
+}
+
+/**
+ * PILLAR MODEL: Transaction
+ */
+export interface Transaction {
+    id?: string;
+    userId: string;
+    type: 'DEBIT' | 'CREDIT' | 'debit' | 'credit';
+    amount: number;
+    currency?: string;
+    previousBalance?: number;
+    newBalance?: number;
+    requestId?: string;
+    status: 'pending' | 'completed' | 'refunded' | 'failed';
+    source?: string;
+    metadata?: any;
+    timestamp: any; // Firestore Timestamp
+    createdAt?: string;
+    refundedAt?: any;
+    refundReason?: string;
+    originalTxId?: string;
+}
+
+/**
+ * PILLAR UTILITY: Internalized Logger
+ */
+export class Logger {
+    constructor(private ctx: any = {}) {}
+    private log(level: string, message: string, data: any = {}) {
+        const payload = { timestamp: new Date().toISOString(), level, message, ...this.ctx, ...data };
+        if (process.env.NODE_ENV === 'production') process.stdout.write(JSON.stringify(payload) + '\n');
+        else process.stdout.write(`[${level}] ${message} ${Object.keys(data).length ? JSON.stringify(data) : ''}\n`);
+    }
+    info(m: string, d?: any) { this.log('INFO', m, d); }
+    warn(m: string, d?: any) { this.log('WARN', m, d); }
+    error(m: string, d?: any) { this.log('ERROR', m, d); }
+    debug(m: string, d?: any) { this.log('DEBUG', m, d); }
+}
 
 const logger = new Logger();
 
@@ -61,9 +115,44 @@ export class HivePersistence {
     private adminApp: admin.app.App | null = null;
     public db!: admin.firestore.Firestore;
     public admin = admin;
+    private memoryCache = new Map<string, { data: any, expires: number }>();
 
     constructor() {
         this.initialize();
+    }
+
+    // --- Cache Logic ---
+    private getCached<T>(key: string): T | null {
+        const item = this.memoryCache.get(key);
+        if (!item) return null;
+        if (Date.now() > item.expires) {
+            this.memoryCache.delete(key);
+            return null;
+        }
+        return item.data as T;
+    }
+
+    private setCached(key: string, data: any, ttlMs = 300000) {
+        this.memoryCache.set(key, { data, expires: Date.now() + ttlMs });
+    }
+
+    /**
+     * WARM CACHE PRIMING
+     * Automatically pre-loads the top 50 most active users into memory on boot.
+     */
+    async primeWarmCache() {
+        try {
+            const snap = await this.db.collection(COLLECTIONS.USERS)
+                .orderBy('lastActive', 'desc')
+                .limit(50).get();
+            
+            for (const doc of snap.docs) {
+                this.setCached(`user_${doc.id}`, { uid: doc.id, ...doc.data() });
+            }
+            logger.info(`[HivePersistence] Warm cache primed with ${snap.size} residents.`);
+        } catch (err) {
+            logger.warn(`[HivePersistence] Cache priming skipped: ${err}`);
+        }
     }
 
     private initialize() {
@@ -119,8 +208,11 @@ export class HivePersistence {
 
     // --- User Operations (Consolidated from users.js) ---
     async getOrCreateUser(discordId: string, discordTag?: string, photoURL?: string | null): Promise<UserProfile> {
+        const cached = this.getCached<UserProfile>(`user_${discordId}`);
+        if (cached) return cached;
+
         const userRef = this.db.collection(COLLECTIONS.USERS).doc(discordId);
-        return await this.db.runTransaction(async (t) => {
+        const user = await this.db.runTransaction(async (t) => {
             const snap = await t.get(userRef);
             if (snap.exists) {
                 const data = snap.data() as UserProfile;
@@ -139,6 +231,9 @@ export class HivePersistence {
             t.set(userRef, newUser);
             return { uid: discordId, ...newUser } as UserProfile;
         });
+
+        this.setCached(`user_${discordId}`, user);
+        return user;
     }
 
     // --- Wallet Operations (Consolidated from WalletService) ---
@@ -158,8 +253,16 @@ export class HivePersistence {
 
                 t.update(userRef, { zaps: admin.firestore.FieldValue.increment(-cleanAmount) });
                 t.set(txRef, {
-                    userId: discordId, amount: -cleanAmount, type: 'DEBIT',
-                    status: 'pending', timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    userId: discordId, 
+                    amount: -cleanAmount, 
+                    type: 'DEBIT',
+                    status: 'pending', 
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    vector: {
+                        missionId: txId,
+                        category: metadata.category || 'unknown',
+                        prompt: metadata.prompt || 'hidden'
+                    },
                     ...metadata
                 });
                 return { success: true };
@@ -344,8 +447,16 @@ export class HivePersistence {
     }
 
     /**
-     * PILLAR INTEGRATION: Moderation Logging
-     * Moved from HiveSafety to centralize all DB writes in Persistence.
+     * PILLAR RESILIENCE: Atomic Wrapper
+     * Ensures multi-document mutations are wrapped in a single transaction.
+     */
+    async runAtomic<T>(op: (t: admin.firestore.Transaction) => Promise<T>): Promise<T> {
+        return await this.db.runTransaction(op);
+    }
+
+    /**
+     * PILLAR INTEGRATION: Moderation Logging (Pass 3)
+     * Centralizes strike calculation and behavioral tracking.
      */
     async logModerationEvent(data: {
         userId: string,
@@ -353,23 +464,16 @@ export class HivePersistence {
         guildId?: string,
         originalPrompt: string,
         matchedTerm: string,
-        action: string
+        action: string,
+        strikeWeight?: number
     }) {
-        const { userId, userTag, guildId, originalPrompt, matchedTerm, action } = data;
+        const { userId, userTag, guildId, originalPrompt, matchedTerm, action, strikeWeight = 1 } = data;
         
-        return await this.db.runTransaction(async (t) => {
+        return await this.runAtomic(async (t) => {
             const userRef = this.db.collection(COLLECTIONS.USERS).doc(userId);
             const userSnap = await t.get(userRef);
             
-            let strikes = 0;
-            let lastStrikeAt = 0;
-            
-            if (userSnap.exists) {
-                const userData = userSnap.data() as UserProfile;
-                strikes = userData.abuseStrikes || 0;
-                lastStrikeAt = (userData as any).lastStrikeAt?.toDate()?.getTime() || 0;
-            } else {
-                // Initialize user if they don't exist yet
+            if (!userSnap.exists) {
                 const newUser: Omit<UserProfile, 'uid'> = {
                     discordId: userId, discordTag: userTag, photoURL: null,
                     zaps: 100, joinedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -379,13 +483,10 @@ export class HivePersistence {
                 t.set(userRef, newUser);
             }
 
-            let strikeWeight = 1;
-            const now = Date.now();
-            if (now - lastStrikeAt < 60000) strikeWeight = 2; // Rapid fire penalty
-
             const logRef = this.db.collection('moderation_logs').doc();
             t.set(logRef, {
-                userId, userTag, guildId, originalPrompt, matchedTerm, strikeWeight, action,
+                ...data,
+                strikeWeight,
                 timestamp: admin.firestore.FieldValue.serverTimestamp()
             });
 

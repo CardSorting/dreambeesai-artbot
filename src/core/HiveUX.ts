@@ -12,7 +12,20 @@ import {
     MessagePayload,
     StringSelectMenuBuilder
 } from 'discord.js';
-import { Logger } from './Logger.js';
+/**
+ * PILLAR UTILITY: Internalized Logger
+ */
+export class Logger {
+    constructor(private ctx: any = {}) {}
+    private log(level: string, message: string, data: any = {}) {
+        const payload = { timestamp: new Date().toISOString(), level, message, ...this.ctx, ...data };
+        if (process.env.NODE_ENV === 'production') process.stdout.write(JSON.stringify(payload) + '\n');
+        else process.stdout.write(`[${level}] ${message} ${Object.keys(data).length ? JSON.stringify(data) : ''}\n`);
+    }
+    info(m: string, d?: any) { this.log('INFO', m, d); }
+    warn(m: string, d?: any) { this.log('WARN', m, d); }
+    error(m: string, d?: any) { this.log('ERROR', m, d); }
+}
 
 const logger = new Logger();
 
@@ -34,12 +47,13 @@ export const Voice = {
  */
 export class HiveUX {
     /**
-     * Standard Generation Embed
+     * Standard Generation Embed (Adaptive Theming)
      */
-    static createGenerationEmbed(prompt: string, modelId: string, cost = 4) {
+    static createGenerationEmbed(prompt: string, modelId: string, cost = 4, risk?: any) {
+        const color = risk?.score > 5 ? '#f59e0b' : '#fbbf24'; // Dynamic amber for low-risk alerts
         return new EmbedBuilder()
             .setTitle('🍯 Fresh Honey Harvested!')
-            .setColor('#fbbf24')
+            .setColor(color as any)
             .addFields(
                 { name: '🌸 Nectar Source', value: prompt.length > 1000 ? prompt.substring(0, 1000) + '...' : prompt },
                 { name: '🐝 Hive Worker', value: `\`${modelId}\``, inline: true },
@@ -47,6 +61,22 @@ export class HiveUX {
             )
             .setImage('attachment://generation.png')
             .setFooter({ text: 'DreamBees Hive • Keep your wings fluttering!' });
+    }
+
+    /**
+     * Feedback Loop Row (The Sovereign Voice)
+     */
+    static createFeedbackRow(interactionId: string) {
+        return new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`feedback_good_${interactionId}`)
+                .setLabel('👍 Sweet')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId(`feedback_bad_${interactionId}`)
+                .setLabel('👎 Sour')
+                .setStyle(ButtonStyle.Secondary)
+        );
     }
 
     /**
@@ -225,12 +255,14 @@ export class HiveUX {
 }
 
 /**
- * Unified Interaction Proxy
+ * Unified Interaction Proxy (Sentient Pass 3)
+ * Manages the lifecycle of a Discord interaction, including state evolution.
  */
 export class HiveProxyInteraction {
     private tokenExpired = false;
     private isEphemeral = false;
     private hasReplied = false;
+    private lastMessage: any = null;
 
     constructor(
         public interaction: ChatInputCommandInteraction | ButtonInteraction | ModalSubmitInteraction, 
@@ -245,10 +277,43 @@ export class HiveProxyInteraction {
     async defer(options: { ephemeral?: boolean } = {}) {
         if (this.interaction.deferred || this.interaction.replied) return;
         if (options.ephemeral) this.isEphemeral = true;
-        await this.interaction.deferReply(options).catch(e => {
+        await (this.interaction as any).deferReply(options).catch((e: any) => {
             if (e.code === 10062) this.tokenExpired = true;
             logger.error("Deferral failed", e);
         });
+    }
+
+    /**
+     * EVOLUTION: Transitions a message from one state to another.
+     */
+    async evolve(payload: string | InteractionReplyOptions | EmbedBuilder) {
+        if (!this.hasReplied) return await this.reply(payload);
+        
+        const data = payload instanceof EmbedBuilder ? { embeds: [payload] } : payload;
+        try {
+            if (this.lastMessage && 'edit' in this.lastMessage) {
+                return await this.lastMessage.edit(data);
+            }
+            return await (this.interaction as any).editReply(data);
+        } catch (err) {
+            logger.warn(`Evolution failed for ${this.id}, falling back to followUp`, err);
+            return await this.followUp(payload);
+        }
+    }
+
+    /**
+     * SELF-DESTRUCT: Automatically cleans up a message after a delay.
+     */
+    async selfDestruct(ms = 15000) {
+        if (this.isEphemeral) return; // Ephemeral messages can't be deleted via API usually or it's redundant
+        setTimeout(async () => {
+            try {
+                if (this.lastMessage && 'delete' in this.lastMessage) await this.lastMessage.delete();
+                else await (this.interaction as any).deleteReply();
+            } catch {
+                // Ignore deletion errors (already deleted or permissions)
+            }
+        }, ms);
     }
 
     async reply(options: string | MessagePayload | InteractionReplyOptions | EmbedBuilder) {
@@ -264,7 +329,8 @@ export class HiveProxyInteraction {
                 await this.interaction.editReply({ content: '✅ **Sent to your Art Studio!**' }).catch(() => {});
             }
             this.hasReplied = true;
-            return await (this.thread as any).send(payload);
+            this.lastMessage = await (this.thread as any).send(payload);
+            return this.lastMessage;
         }
 
         try {
@@ -275,13 +341,15 @@ export class HiveProxyInteraction {
                 : await (this.interaction as any).reply(payload);
             
             this.hasReplied = true;
+            this.lastMessage = result;
             return result;
         } catch (e: any) {
             if (e.code === 10062 || e.code === 50227) {
                 this.tokenExpired = true;
                 if (this.interaction.channel && 'send' in this.interaction.channel) {
                     this.hasReplied = true;
-                    return await (this.interaction.channel as any).send(payload).catch(() => {});
+                    this.lastMessage = await (this.interaction.channel as any).send(payload).catch(() => {});
+                    return this.lastMessage;
                 }
             }
             throw e;

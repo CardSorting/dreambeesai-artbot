@@ -1,11 +1,7 @@
-import { SlashCommandBuilder } from 'discord.js';
-import { hivePersistence } from '../services/HivePersistence.js';
-import { HiveUX, HiveProxyInteraction } from '../core/HiveUX.js';
-import { Command, CommandContext } from '../models/index.js';
-import { HiveEngine } from '../core/HiveEngine.js';
-
-/**
- * REFACTORED MONOLITHIC COMMAND: Status
+import { SlashCommandBuilder } from "discord.js";
+import { hivePersistence } from "../services/HivePersistence.js";
+import { HiveUX, HiveProxyInteraction } from "../core/HiveUX.js";
+import { Command, CommandContext } from "../core/HiveEngine.js";
  * Displays the user's current Zap balance, streak, and reward availability.
  */
 export const status: Command = {

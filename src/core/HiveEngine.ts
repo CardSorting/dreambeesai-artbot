@@ -8,11 +8,63 @@ import sharp from 'sharp';
 import pLimit from 'p-limit';
 import { OAuth2Client } from 'google-auth-library';
 import { CloudTasksClient } from '@google-cloud/tasks';
-import { Logger } from './Logger.js';
+/**
+ * PILLAR UTILITY: Structured Logger
+ */
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+const levels: Record<LogLevel, number> = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+const currentLevel = (process.env.LOG_LEVEL as LogLevel) || (process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG');
+const reset = '\x1b[0m';
+const SECRET_KEYS = ['api-key', 'token', 'secret', 'password', 'auth', 'key'];
+
+function scrubData(data: any, depth = 0, maxDepth = 3, visited = new WeakSet()): any {
+    if (depth >= maxDepth) return '[DEPTH]';
+    if (!data || typeof data !== 'object') return data;
+    if (visited.has(data)) return '[CIRCULAR]';
+    visited.add(data);
+    const scrubbed: any = Array.isArray(data) ? [] : {};
+    for (const key in data) {
+        const val = data[key];
+        if (SECRET_KEYS.some(sk => key.toLowerCase().includes(sk))) scrubbed[key] = '[SCRUBBED]';
+        else scrubbed[key] = (typeof val === 'object' ? scrubData(val, depth + 1, maxDepth, visited) : val);
+    }
+    return scrubbed;
+}
+
+export class Logger {
+    constructor(private ctx: any = {}) {}
+    private log(level: LogLevel, message: string, data: any = {}) {
+        if (levels[level] < levels[currentLevel]) return;
+        const payload = { timestamp: new Date().toISOString(), level, message, ...this.ctx, ...scrubData(data) };
+        if (process.env.NODE_ENV === 'production') process.stdout.write(JSON.stringify(payload) + '\n');
+        else process.stdout.write(`${level === 'ERROR' ? '\x1b[31m' : '\x1b[36m'}[${level}]${reset} ${message} ${Object.keys(data).length ? JSON.stringify(data) : ''}\n`);
+    }
+    info(m: string, d?: any) { this.log('INFO', m, d); }
+    warn(m: string, d?: any) { this.log('WARN', m, d); }
+    error(m: string, d?: any) { this.log('ERROR', m, d); }
+    debug(m: string, d?: any) { this.log('DEBUG', m, d); }
+    child(c: any) { return new Logger({ ...this.ctx, ...c }); }
+}
+
+/**
+ * PILLAR MODELS: Internalized Commands
+ */
+export interface CommandContext {
+    logger: Logger;
+    jobs: Map<string, any>;
+    signal: AbortSignal;
+    engine: HiveEngine;
+}
+
+export interface Command {
+    data: any;
+    category?: string;
+    execute(interaction: HiveProxyInteraction, context: CommandContext): Promise<any>;
+}
+
 import { hivePersistence } from '../services/HivePersistence.js';
 import { HiveUX, HiveProxyInteraction, Voice } from './HiveUX.js';
 import { HiveSafety } from '../services/HiveSafety.js';
-import { Command, CommandContext } from '../models/index.js';
 import { AttachmentBuilder } from 'discord.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +81,31 @@ export interface Job {
 }
 
 /**
+ * MISSION STATE
+ * Tracks the lifecycle of a Hive interaction for autonomous recovery.
+ */
+export enum HiveState {
+    AUTHORIZED = 'AUTHORIZED', // Passed safety & residency
+    CHARGED = 'CHARGED',       // Zaps debited
+    ACTIVE = 'ACTIVE',         // Mission task running
+    COMPLETED = 'COMPLETED',   // Mission task finished
+    FAILED = 'FAILED'          // Mission task errored
+}
+
+/**
+ * MISSION PROFILE
+ * Defines the behavioral and technical constraints for a Hive task.
+ */
+export interface MissionProfile {
+    category: string;
+    description: string;
+    cost: number;
+    prompt?: string;
+    safetyDepth?: 'NONE' | 'STANDARD' | 'STRICT';
+    retryLimit?: number;
+}
+
+/**
  * MONOLITHIC PILLAR: HiveEngine
  */
 export class HiveEngine {
@@ -42,7 +119,7 @@ export class HiveEngine {
     private startTime = Date.now();
     private authClient = new OAuth2Client();
 
-    // Circuit Breaker State
+    // Circuit Breaker State (Monitored Layer)
     private breakers = {
         generation: { count: 0, lastFailure: 0, status: 'CLOSED' as 'CLOSED' | 'OPEN' | 'HALF-OPEN' }
     };
@@ -62,6 +139,42 @@ export class HiveEngine {
             }
         });
         this.setupProcessHandlers();
+    }
+
+    /**
+     * SELF-HEALING BOOT
+     * Sweeps for pending missions from previous sessions to ensure financial integrity.
+     */
+    private async healTheHive() {
+        logger.info('[HiveEngine] Initiating Self-Healing Boot...');
+        const recovered = await hivePersistence.recoverZombies();
+        if (recovered > 0) {
+            logger.info(`[HiveEngine] Successfully healed ${recovered} orphaned missions.`);
+        }
+    }
+
+    public async start() {
+        logger.info('--- HIVE ENGINE BOOT (SOVEREIGN v4) ---');
+
+        const isHealthy = await hivePersistence.verifyConnectivity();
+        if (!isHealthy) {
+            logger.error("FATAL: HivePersistence check failed.");
+            process.exit(1);
+        }
+
+        // Sovereign Boot Sequence
+        await hivePersistence.primeWarmCache();
+        await this.healTheHive();
+        
+        await this.loadExtensions();
+        await this.initializeDiscord();
+        this.initializeServer();
+        this.startMaintenance();
+
+        this.isInitialized = true;
+        logger.info('----------------------------------------');
+        logger.info('   🐝 COLLECTIVE MISSION READY   ');
+        logger.info('----------------------------------------');
     }
 
     private loadConfig() {
@@ -92,33 +205,13 @@ export class HiveEngine {
         }
     }
 
-    public async start() {
-        logger.info('--- HIVE ENGINE BOOT (MONOLITHIC v3) ---');
-
-        const isHealthy = await hivePersistence.verifyConnectivity();
-        if (!isHealthy) {
-            logger.error("FATAL: HivePersistence check failed.");
-            process.exit(1);
-        }
-
-        await this.loadExtensions();
-        await this.initializeDiscord();
-        this.initializeServer();
-        this.startMaintenance();
-
-        this.isInitialized = true;
-        logger.info('----------------------------------------');
-        logger.info('   🐝 COLLECTIVE MISSION READY   ');
-        logger.info('----------------------------------------');
-    }
-
     // --- Discord Integration ---
     private async initializeDiscord() {
         this.client.once(Events.ClientReady, (c) => {
             logger.info(`Logged in as ${c.user.tag}!`);
         });
 
-        this.client.on(Events.InteractionCreate, async (i) => {
+        this.client.on(Events.InteractionCreate, async (i: any) => {
             if (!this.isInitialized) return;
             await this.handleInteraction(i);
         });
@@ -126,7 +219,7 @@ export class HiveEngine {
         await this.client.login(this.config.DISCORD_TOKEN);
     }
 
-    private async handleInteraction(interaction: Interaction) {
+    private async handleInteraction(interaction: any) {
         const ctxLogger = logger.child({ interactionId: interaction.id, userId: interaction.user.id });
         const controller = new AbortController();
         this.activeJobs.set(interaction.id, { controller, createdAt: Date.now() });
@@ -141,7 +234,6 @@ export class HiveEngine {
             } else if (interaction.isButton()) {
                 await this.handleButton(hiveInteraction, controller.signal);
             } else if (interaction.isMessageComponent() || interaction.isModalSubmit()) {
-                // Secondary Modal Routing
                 const customId = (interaction as any).customId;
                 const prefix = Array.from(this.interactionHandlers.keys()).find(p => customId.startsWith(p));
                 if (prefix) {
@@ -155,44 +247,42 @@ export class HiveEngine {
     }
 
     /**
-     * UNIVERSAL ORCHESTRATION PIPELINE
-     * Consolidates Safety, Persistence, and UX into a single transactional flow.
+     * UNIVERSAL ORCHESTRATION PIPELINE (Autonomous State Machine)
      */
     async orchestrate(
         interaction: HiveProxyInteraction, 
-        options: { 
-            cost: number, 
-            prompt?: string,
-            category: string,
-            task: (signal: AbortSignal) => Promise<any> 
-        }
+        mission: MissionProfile,
+        task: (signal: AbortSignal) => Promise<any>
     ) {
         const discordId = interaction.user.id;
         const signal = this.activeJobs.get(interaction.id)?.controller.signal || new AbortController().signal;
+        let state = HiveState.AUTHORIZED;
 
-        // 1. Safety & Abuse Check (The Shield)
-        if (options.prompt) {
-            const safety = await HiveSafety.guardHive(options.prompt);
-            if (!safety.approved) {
+        // 1. Sovereign Risk Analysis (The Shield)
+        if (mission.prompt && mission.safetyDepth !== 'NONE') {
+            const risk = HiveSafety.analyze(mission.prompt, discordId);
+            if (!risk.approved) {
+                const strikeWeight = HiveSafety.calculateStrikeWeight(risk);
                 await hivePersistence.logModerationEvent({
                     userId: discordId,
                     userTag: interaction.user.tag,
                     guildId: interaction.guildId || 'DM',
-                    originalPrompt: options.prompt,
-                    matchedTerm: safety.matchedTerm || 'unknown',
-                    action: 'PROMPT_REJECTED'
+                    originalPrompt: mission.prompt,
+                    matchedTerm: risk.reason,
+                    action: 'PROMPT_REJECTED',
+                    strikeWeight
                 });
                 return await interaction.reply({
                     content: Voice.safety,
                     ephemeral: true
                 });
             }
+            // Apply Nectar Enrichment if approved
+            mission.prompt = HiveSafety.enrich(mission.prompt, mission.category);
         }
 
-        // 2. Instance Loading & Balance Check (The Vault)
+        // 2. Instance Loading & Residency Check
         const user = await hivePersistence.getOrCreateUser(discordId, interaction.user.tag);
-        
-        // Check for abuse backoff
         const backoff = await HiveSafety.getAbuseBackoff(user);
         if (backoff > 0) {
             return await interaction.reply({
@@ -201,9 +291,9 @@ export class HiveEngine {
             });
         }
 
-        if (user.zaps < options.cost) {
+        if (user.zaps < mission.cost) {
             return await interaction.reply({
-                content: Voice.emptyJar(options.cost, user.zaps),
+                content: Voice.emptyJar(mission.cost, user.zaps),
                 ephemeral: true
             });
         }
@@ -218,18 +308,36 @@ export class HiveEngine {
         }
 
         try {
-            // 4. Financial Commit
-            const debit = await hivePersistence.debit(discordId, options.cost, interaction.id, {
-                prompt: options.prompt, category: options.category
+            // 4. Financial Commit (AUTHORIZED -> CHARGED)
+            const debit = await hivePersistence.debit(discordId, mission.cost, interaction.id, {
+                prompt: mission.prompt, category: mission.category
             });
             if (!debit.success) throw new Error(debit.error);
+            state = HiveState.CHARGED;
 
-            // 5. Execution (The Mission)
-            await options.task(signal);
+            // 5. Sovereignty Execution (CHARGED -> ACTIVE)
+            state = HiveState.ACTIVE;
+            let attempts = 0;
+            const maxAttempts = mission.retryLimit || 1;
+            while (attempts < maxAttempts) {
+                try {
+                    await task(signal);
+                    state = HiveState.COMPLETED;
+                    break; 
+                } catch (taskErr) {
+                    attempts++;
+                    if (attempts >= maxAttempts) throw taskErr;
+                    logger.warn(`Mission attempt ${attempts} failed, retrying...`, { txId: interaction.id });
+                    await new Promise(r => setTimeout(r, 1000 * attempts));
+                }
+            }
 
         } catch (err: any) {
-            logger.error(`Orchestration Failure for ${discordId}`, err);
-            await hivePersistence.refund(interaction.id, 'System Error');
+            logger.error(`Mission Failure [${state}]: ${interaction.id}`, err);
+            // Autonomous Refund if charged but not completed
+            if (state === HiveState.CHARGED || state === HiveState.ACTIVE) {
+                await hivePersistence.refund(interaction.id, err.message || 'Mission Failure');
+            }
             await interaction.reply({ content: Voice.failure, ephemeral: true });
         } finally {
             await hivePersistence.releaseLock(discordId);

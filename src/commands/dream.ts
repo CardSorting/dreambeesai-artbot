@@ -1,11 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { hivePersistence } from '../services/HivePersistence.js';
-import { HiveSafety } from '../services/HiveSafety.js';
 import { HiveUX, HiveProxyInteraction } from '../core/HiveUX.js';
-import { Command, CommandContext } from '../models/index.js';
-import { Logger } from '../core/Logger.js';
-
-const logger = new Logger();
+import { Command, CommandContext } from '../core/HiveEngine.js';
 const MODEL_ID = 'wai-illustrious';
 
 /**
@@ -31,24 +27,25 @@ export const dream: Command = {
         await interaction.defer({ ephemeral: true });
 
         await engine.orchestrate(interaction, {
+            category: 'image',
+            description: 'High-fidelity art generation',
             cost: hivePersistence.calculateBatchCost(MODEL_ID, 4),
             prompt: rawPrompt,
-            category: 'image',
-            task: async (signal: AbortSignal) => {
-                // Offload to Collective Hive
-                await engine.enqueueGeneration({
-                    discordId: interaction.user.id,
-                    interactionId: interaction.id,
-                    prompt: rawPrompt,
-                    modelId: MODEL_ID,
-                    guildId: interaction.guildId
-                });
+            retryLimit: 3
+        }, async (signal: AbortSignal) => {
+            // Offload to Collective Hive
+            await engine.enqueueGeneration({
+                discordId: interaction.user.id,
+                interactionId: interaction.id,
+                prompt: rawPrompt,
+                modelId: MODEL_ID,
+                guildId: interaction.guildId
+            });
 
-                await interaction.reply({
-                    content: `🐝 **Queued!** Offloaded to the Collective Hive. Your art is being harvested.`,
-                    ephemeral: true
-                });
-            }
+            await interaction.reply({
+                content: `🐝 **Queued!** Offloaded to the Collective Hive. Your art is being harvested.`,
+                ephemeral: true
+            });
         });
     }
 };

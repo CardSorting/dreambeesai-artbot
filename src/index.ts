@@ -1,16 +1,11 @@
 import { HiveEngine } from './core/HiveEngine.js';
-import { Logger } from './core/Logger.js';
 
-const logger = new Logger();
-
-async function bootstrap() {
-    try {
-        const hive = new HiveEngine();
-        await hive.start();
-    } catch (err) {
-        logger.error('CRITICAL: Bootstrapping failed.', err);
-        process.exit(1);
-    }
-}
-
-bootstrap();
+/**
+ * THE SPARK
+ * Initializes and ignites the Sovereign Hive.
+ */
+const hive = new HiveEngine();
+hive.start().catch((err: any) => {
+    console.error('FATAL: Hive Engine failed to ignite.', err);
+    process.exit(1);
+});

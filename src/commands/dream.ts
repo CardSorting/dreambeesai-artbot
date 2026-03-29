@@ -37,9 +37,11 @@ export const dream: Command = {
             await engine.enqueueGeneration({
                 discordId: interaction.user.id,
                 interactionId: interaction.id,
+                channelId: interaction.channel!.id,
                 prompt: rawPrompt,
                 modelId: MODEL_ID,
-                guildId: interaction.guildId
+                guildId: interaction.guildId,
+                createdAt: Date.now()
             });
 
             await interaction.reply({

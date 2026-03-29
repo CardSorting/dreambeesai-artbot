@@ -36,9 +36,11 @@ export const flash: Command = {
             await engine.enqueueGeneration({
                 discordId: interaction.user.id,
                 interactionId: interaction.id,
+                channelId: (interaction.interaction as any).channelId,
                 prompt: rawPrompt,
                 modelId: MODEL_ID,
-                guildId: interaction.guildId
+                guildId: interaction.guildId,
+                createdAt: Date.now()
             });
 
             await interaction.reply({

@@ -64,6 +64,21 @@ export class HiveUX {
     }
 
     /**
+     * Processing / Harvesting Embed
+     */
+    static createProcessingEmbed(prompt: string, modelId: string) {
+        return new EmbedBuilder()
+            .setTitle('🐝 Your Vision is being Harvested...')
+            .setDescription('The Collective Hive has received your nectar and our workers are already busy in the fields. Please wait a moment while we compile your visions...')
+            .setColor('#fbbf24')
+            .addFields(
+                { name: '🌸 Nectar Source', value: prompt.length > 500 ? prompt.substring(0, 500) + '...' : prompt },
+                { name: '🐝 Assigned Worker', value: `\`${modelId}\``, inline: true }
+            )
+            .setFooter({ text: 'DreamBees Hive • Harvesting in progress...' });
+    }
+
+    /**
      * Feedback Loop Row (The Sovereign Voice)
      */
     static createFeedbackRow(interactionId: string) {

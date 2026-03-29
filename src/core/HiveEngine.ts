@@ -586,30 +586,35 @@ export class HiveEngine {
             const { interactionId, discordId, channelId } = task;
             
             try {
-                // 1. GENERATION: Generate via AI Model or Remix via Modal Edit
-                logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
-                
-                let result;
-                if (task.imageUrl) {
-                    result = await this.hiveGenerator.remix(task, task.imageUrl);
-                } else {
-                    result = await this.hiveGenerator.generate(task);
-                }
-
-                if (result.status === 'failed') {
-                    throw new Error(result.error || 'AI Generation Failed');
-                }
-
-                // 2. PLUMBING: Stitch buffers
-                logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
-                const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
-                const stitched = await HiveGenerator.stitch(buffers);
-
-                // 3. CORE/UI: Discord Delivery
-                const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });
                 const channel = await this.client.channels.fetch(channelId).catch(() => null);
-                
                 if (channel && 'send' in channel) {
+                    const processingMsg = await (channel as any).send({ 
+                        embeds: [HiveUX.createProcessingEmbed(task.prompt, task.modelId)] 
+                    }).catch(() => null);
+
+                    // 1. GENERATION: Generate via AI Model or Remix via Modal Edit
+                    logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
+                    
+                    let result;
+                    if (task.imageUrl) {
+                        result = await this.hiveGenerator.remix(task, task.imageUrl);
+                    } else {
+                        result = await this.hiveGenerator.generate(task);
+                    }
+
+                    if (result.status === 'failed') {
+                        if (processingMsg) await processingMsg.delete().catch(() => {});
+                        throw new Error(result.error || 'AI Generation Failed');
+                    }
+
+                    // 2. PLUMBING: Stitch buffers
+                    logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
+                    const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
+                    const stitched = await HiveGenerator.stitch(buffers);
+
+                    // 3. CORE/UI: Discord Delivery
+                    const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });
+                    
                     const components = [];
                     if (result.images.length > 1) {
                         components.push(HiveUX.createUpscaleRow(interactionId, result.images.length));
@@ -618,11 +623,14 @@ export class HiveEngine {
                     }
                     components.push(HiveUX.createModRow(interactionId));
 
+                    const promptPreview = task.prompt.length > 200 ? task.prompt.substring(0, 197) + '...' : task.prompt;
                     await (channel as any).send({ 
-                        content: `🐝 **Harvest Complete!** <@${discordId}>, your vision from the hive:`, 
+                        content: `🐝 **Harvest Complete!** <@${discordId}>, your vision of: *"${promptPreview}"*`, 
                         files: [attachment],
                         components
                     });
+
+                    if (processingMsg) await processingMsg.delete().catch(() => {});
                 }
 
                 // 4. INFRASTRUCTURE: Update State

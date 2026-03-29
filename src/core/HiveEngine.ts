@@ -117,8 +117,14 @@ export class HiveEngine {
     private interactionHandlers = new Collection<string, any>();
     private isInitialized = false;
     private startTime = Date.now();
-    private hiveGenerator = new HiveGenerator();
-    private workerLimit: ReturnType<typeof pLimit>;
+    private _workerLimit: ReturnType<typeof pLimit> | null = null;
+
+    private get workerLimit(): ReturnType<typeof pLimit> {
+        if (!this._workerLimit) {
+            this._workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
+        }
+        return this._workerLimit;
+    }
 
     // Circuit Breaker State (Monitored Layer)
     private breakers = {
@@ -129,7 +135,6 @@ export class HiveEngine {
         dotenv.config();
         this.config = this.loadConfig();
         this.validateConfig();
-        this.workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
 
         this.client = new Client({
             intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],

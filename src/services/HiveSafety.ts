@@ -20,6 +20,7 @@ export class Logger {
     constructor(private ctx: any = {}) {}
     private log(level: string, message: string, data: any = {}) {
         const payload = { timestamp: new Date().toISOString(), level, message, ...this.ctx, ...data };
+        // Read NODE_ENV dynamically at runtime for secure branching
         if (process.env.NODE_ENV === 'production') process.stdout.write(JSON.stringify(payload) + '\n');
         else process.stdout.write(`[${level}] ${message} ${Object.keys(data).length ? JSON.stringify(data) : ''}\n`);
     }
@@ -159,10 +160,24 @@ export class HiveSafety {
      */
     static async getAbuseBackoff(user: UserProfile): Promise<number> {
         const strikes = user.abuseStrikes || 0;
+        
+        // RESILIENCE: Safe Timestamp Parsing
         const strikeObj = (user as any).lastStrikeAt;
-        const lastStrikeAt = strikeObj?.toDate?.()?.getTime() || Number(strikeObj) || 0;
+        let lastStrikeAt = 0;
 
-        if (strikes < 3 || !lastStrikeAt) return 0;
+        if (strikeObj) {
+            if (typeof strikeObj.toDate === 'function') {
+                lastStrikeAt = strikeObj.toDate().getTime();
+            } else if (strikeObj instanceof Date) {
+                lastStrikeAt = strikeObj.getTime();
+            } else if (typeof strikeObj === 'number') {
+                lastStrikeAt = strikeObj;
+            } else if (typeof strikeObj === 'string') {
+                lastStrikeAt = new Date(strikeObj).getTime();
+            }
+        }
+
+        if (strikes < 3 || !lastStrikeAt || isNaN(lastStrikeAt)) return 0;
         
         // Exponential complexity in backoff
         // 3 strikes = 5 mins, 5 strikes = 30 mins, 10 strikes = 2 hours, 20+ = 24 hours

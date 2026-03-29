@@ -460,8 +460,14 @@ export class HivePersistence {
                 const snap = await t.get(lockRef);
                 if (snap.exists) {
                     const data = snap.data();
-                    if (ownerId && data?.ownerId === ownerId) return;
-                    if (data?.expiresAt?.toDate() > new Date()) throw new Error('ALREADY_LOCKED');
+                    // If ownerId matches, we allow re-entrancy, but we must update the expiry
+                    if (ownerId && data?.ownerId === ownerId) {
+                        const expiresAt = new Date();
+                        expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+                        t.update(lockRef, { expiresAt });
+                        return;
+                    }
+                    if (data?.expiresAt?.toDate?.() > new Date()) throw new Error('ALREADY_LOCKED');
                 }
                 const expiresAt = new Date();
                 expiresAt.setMinutes(expiresAt.getMinutes() + 5);
@@ -469,6 +475,7 @@ export class HivePersistence {
             });
             return true;
         } catch (e: any) {
+            // Strictly fail-closed: return false on any error, including network or ALREADY_LOCKED
             if (e.message !== 'ALREADY_LOCKED') {
                 logger.error(`[LOCK] Failed to acquire lock for ${discordId} due to unexpected error:`, e.message);
             }

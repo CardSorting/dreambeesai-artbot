@@ -12,7 +12,7 @@ async function testPipelineStandalone() {
     console.log("🐜 Starting Headless Pipeline Diagnostic...");
     
     // --- SETTINGS ---
-    const USE_MOCK_AI = true; // Set to false to test real Modal credits
+    const USE_MOCK_AI = false; // Set to false to test real Modal credits
     const testInteractionId = 'headless_mission_' + Date.now();
 
     // --- 1. MOCK DISCORD INTERFACE ---

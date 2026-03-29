@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Collection, Events, ActivityType, Interaction } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, Events, ActivityType, Interaction, AttachmentBuilder } from 'discord.js';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -8,6 +8,10 @@ import sharp from 'sharp';
 import pLimit from 'p-limit';
 import { OAuth2Client } from 'google-auth-library';
 import { CloudTasksClient } from '@google-cloud/tasks';
+import { ModalAIAdapter } from '../infrastructure/ModalAIAdapter.js';
+import { ImageProcessor } from '../utils/ImageProcessor.js';
+import { GenerationTask } from '../domain/Generation.js';
+
 /**
  * PILLAR UTILITY: Structured Logger
  */
@@ -62,10 +66,10 @@ export interface Command {
     execute(interaction: HiveProxyInteraction, context: CommandContext): Promise<any>;
 }
 
-import { hivePersistence } from '../services/HivePersistence.js';
+import { hivePersistence, COLLECTIONS } from '../services/HivePersistence.js';
 import { HiveUX, HiveProxyInteraction, Voice } from './HiveUX.js';
 import { HiveSafety } from '../services/HiveSafety.js';
-import { AttachmentBuilder } from 'discord.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,6 +122,7 @@ export class HiveEngine {
     private isInitialized = false;
     private startTime = Date.now();
     private authClient = new OAuth2Client();
+    private modalAI = new ModalAIAdapter();
 
     // Circuit Breaker State (Monitored Layer)
     private breakers = {
@@ -425,26 +430,6 @@ export class HiveEngine {
         await cloudTasksClient.createTask({ parent, task });
     }
 
-    // --- Image Processing (Consolidated from lib/image-processor.js) ---
-    async stitch(buffers: Buffer[]) {
-        return imageLimit(async () => {
-            const resized = await Promise.all(buffers.map(b => sharp(b).resize(1024, 1024).toBuffer()));
-            const result = await sharp({
-                create: { width: 2048, height: 2048, channels: 3, background: { r: 0, g: 0, b: 0 } }
-            })
-            .composite([
-                { input: resized[0], top: 0, left: 0 },
-                ...resized.slice(1, 4).map((input, i) => ({ 
-                    input, 
-                    top: i === 0 ? 0 : 1024, 
-                    left: i === 1 ? 0 : 1024 
-                }))
-            ])
-            .webp({ quality: 90 }).toBuffer();
-            return result;
-        });
-    }
-
     // --- Server & Maintenance ---
     private initializeServer() {
         this.server = http.createServer(async (req, res) => {
@@ -472,8 +457,98 @@ export class HiveEngine {
     }
 
     private async handleTaskWebhook(req: http.IncomingMessage, res: http.ServerResponse) {
-        // ... OIDC Verification & Processing logic ...
-        res.writeHead(200).end(JSON.stringify({ status: 'received' }));
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+            try {
+                // 1. OIDC Identity Verification
+                const authHeader = req.headers['authorization'];
+                if (!authHeader?.startsWith('Bearer ')) {
+                    logger.warn('[WORKER] Missing OIDC Token');
+                    res.writeHead(401).end('Unauthorized');
+                    return;
+                }
+
+                const idToken = authHeader.split(' ')[1];
+                const audience = this.config.TASK_WEBHOOK_URL;
+                
+                try {
+                    await this.authClient.verifyIdToken({
+                        idToken,
+                        audience
+                    });
+                } catch (oidcErr) {
+                    logger.error('[WORKER] OIDC Verification Failed', oidcErr);
+                    res.writeHead(403).end('Forbidden');
+                    return;
+                }
+
+                // 2. Process Payload
+                const payload = JSON.parse(body) as GenerationTask;
+                logger.info(`[WORKER] Hive Task Accepted: ${payload.interactionId}`);
+                
+                // 3. Background Execution (Fire & Forget from HTTP context)
+                this.executeGeneration(payload).catch(err => {
+                    logger.error(`[WORKER] Background Mission Failed: ${payload.interactionId}`, err);
+                });
+                
+                res.writeHead(200).end(JSON.stringify({ status: 'queued_for_processing' }));
+            } catch (err: any) {
+                logger.error(`[WORKER] Webhook Pipeline Error`, err);
+                res.writeHead(400).end(JSON.stringify({ error: 'Invalid Payload' }));
+            }
+        });
+    }
+
+    /**
+     * WORKER PIPELINE: The Hive's active labor force.
+     * Transitions from Core orchestration to Infrastructure execution.
+     */
+    private async executeGeneration(task: GenerationTask) {
+        const { interactionId, discordId, channelId } = task;
+        
+        try {
+            // 1. INFRASTRUCTURE: Generate via Modal
+            logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
+            const result = await this.modalAI.generate(task);
+
+            if (result.status === 'failed') {
+                throw new Error(result.error || 'AI Generation Failed');
+            }
+
+            // 2. PLUMBING: Stitch buffers
+            logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
+            const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
+            const stitched = await ImageProcessor.stitch(buffers);
+
+            // 3. CORE/UI: Discord Delivery
+            const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });
+            const channel = await this.client.channels.fetch(channelId).catch(() => null);
+            
+            if (channel && 'send' in channel) {
+                await (channel as any).send({ 
+                    content: `🐝 **Harvest Complete!** <@${discordId}>, your vision from the hive:`, 
+                    files: [attachment] 
+                });
+            }
+
+            // 4. INFRASTRUCTURE: Update State
+            const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+            await hivePersistence.setDocCompat(genRef, {
+                status: 'completed',
+                resolvedAt: hivePersistence.fieldValue.serverTimestamp()
+            }, { merge: true });
+
+            logger.info(`[WORKER] Mission Accomplished: ${interactionId}`);
+
+        } catch (err: any) {
+            logger.error(`[WORKER] Mission Failure: ${interactionId}`, err);
+            const genRef = hivePersistence.collection(COLLECTIONS.GENERATIONS).doc(interactionId);
+            await hivePersistence.setDocCompat(genRef, {
+                status: 'failed',
+                error: err.message
+            }, { merge: true });
+        }
     }
 
     private isCircuitOpen(service: 'generation') {

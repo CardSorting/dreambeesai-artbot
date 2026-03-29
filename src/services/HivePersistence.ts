@@ -153,50 +153,46 @@ export class HivePersistence {
     }
 
     // --- SDK Compatibility Shim ---
-    private get doc() {
-        return (path: string, ...pathSegments: string[]) => {
-            if (this.isWebSDK) return webDoc(this.db, path, ...pathSegments);
-            return this.db.doc(`${path}/${pathSegments.join('/')}`);
-        };
+    public doc(path: string, ...pathSegments: string[]) {
+        if (this.isWebSDK) return webDoc(this.db, path, ...pathSegments);
+        return this.db.doc(`${path}/${pathSegments.join('/')}`);
     }
 
-    private get collection() {
-        return (path: string) => {
-            if (this.isWebSDK) {
-                const col = webCollection(this.db, path);
+
+    public collection(path: string) {
+        if (!this.isWebSDK) return this.db.collection(path);
+        
+        const col = webCollection(this.db, path);
+        return {
+            doc: (id?: string) => id ? webDoc(this.db, path, id) : webDoc(webCollection(this.db, path)),
+            where: (field: string, op: any, value: any) => {
+                const q = webQuery(col, webWhere(field, op, value));
                 return {
-                    doc: (id?: string) => id ? webDoc(this.db, path, id) : webDoc(webCollection(this.db, path)),
-                    where: (field: string, op: any, value: any) => {
-                        const q = webQuery(col, webWhere(field, op, value));
-                        return {
-                            limit: (n: number) => ({
-                                get: () => webGetDocs(webQuery(q, webLimit(n)))
-                            }),
-                            get: () => webGetDocs(q)
-                        };
-                    },
-                    orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => {
-                        const q = webQuery(col, webOrderBy(field, dir));
-                        return {
-                            limit: (n: number) => ({
-                                get: () => webGetDocs(webQuery(q, webLimit(n)))
-                            }),
-                            get: () => webGetDocs(q)
-                        };
-                    },
                     limit: (n: number) => ({
-                        get: () => webGetDocs(webQuery(col, webLimit(n)))
+                        get: () => webGetDocs(webQuery(q, webLimit(n)))
                     }),
-
-                    get: () => webGetDocs(col),
-                    add: (data: any) => webSetDoc(webDoc(col), data)
+                    get: () => webGetDocs(q)
                 };
-            }
-            return this.db.collection(path);
+            },
+            orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => {
+                const q = webQuery(col, webOrderBy(field, dir));
+                return {
+                    limit: (n: number) => ({
+                        get: () => webGetDocs(webQuery(q, webLimit(n)))
+                    }),
+                    get: () => webGetDocs(q)
+                };
+            },
+            limit: (n: number) => ({
+                get: () => webGetDocs(webQuery(col, webLimit(n)))
+            }),
+
+            get: () => webGetDocs(col),
+            add: (data: any) => webSetDoc(webDoc(col), data)
         };
     }
 
-    private async runTransactionCompat<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
+    public async runTransactionCompat<T>(updateFunction: (transaction: any) => Promise<T>): Promise<T> {
         if (this.isWebSDK) {
             return await webRunTransaction(this.db, async (webT) => {
                 const shimT = {
@@ -211,14 +207,11 @@ export class HivePersistence {
         return await this.db.runTransaction(updateFunction);
     }
 
-    private get fieldValue() {
-        return {
-            serverTimestamp: () => this.isWebSDK ? webServerTimestamp() : admin.firestore.FieldValue.serverTimestamp(),
-            increment: (n: number) => this.isWebSDK ? webIncrement(n) : admin.firestore.FieldValue.increment(n)
-        };
+    public get fieldValue() {
+        return this.isWebSDK ? { serverTimestamp: webServerTimestamp, increment: webIncrement } : admin.firestore.FieldValue;
     }
 
-    private async getDocCompat(ref: any) {
+    public async getDocCompat(ref: any) {
         if (this.isWebSDK) {
             const snap = await webGetDoc(ref);
             return { exists: snap.exists(), data: () => snap.data(), id: snap.id, ref };
@@ -226,12 +219,12 @@ export class HivePersistence {
         return await ref.get();
     }
 
-    private async setDocCompat(ref: any, data: any, options: any = {}) {
-        if (this.isWebSDK) return await webSetDoc(ref, data, options);
-        return await ref.set(data, options);
+    public async setDocCompat(ref: any, data: any, options: any = {}) {
+        if (!this.isWebSDK) return await ref.set(data, options);
+        return await webSetDoc(ref, data, options);
     }
 
-    private async updateDocCompat(ref: any, data: any) {
+    public async updateDocCompat(ref: any, data: any) {
         if (this.isWebSDK) return await webUpdateDoc(ref, data);
         return await ref.update(data);
     }

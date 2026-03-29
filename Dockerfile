@@ -53,8 +53,6 @@ ENV SHARP_CACHE_DIR=/tmp/.sharp-cache
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/commands ./commands
-COPY --from=builder /app/interactions ./interactions
 
 # [SECURITY] Switch to non-privileged user immediately
 USER node

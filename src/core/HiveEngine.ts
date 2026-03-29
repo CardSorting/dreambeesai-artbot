@@ -553,24 +553,49 @@ export class HiveEngine {
         const queue = this.config.CLOUD_TASKS_QUEUE;
         const url = this.config.TASK_WEBHOOK_URL;
         
-        if (!project || !location || !queue) throw new Error("Cloud Tasks Configuration Missing");
-
-        const parent = cloudTasksClient.queuePath(project, location, queue);
-        const task = {
-            httpRequest: {
-                httpMethod: 'POST' as const,
-                url,
-                headers: { 'Content-Type': 'application/json' },
-                body: Buffer.from(JSON.stringify(payload)).toString('base64'),
-                oidcToken: {
-                    serviceAccountEmail: this.config.CLOUD_TASKS_SA_EMAIL || `${project}@appspot.gserviceaccount.com`,
-                    audience: url
-                },
-            },
-        };
-
         await hivePersistence.saveGeneration(payload.interactionId, payload);
-        await cloudTasksClient.createTask({ parent, task });
+
+        try {
+            if (!project || !location || !queue || !url) {
+                throw new Error("Cloud Tasks Configuration Missing");
+            }
+
+            const parent = cloudTasksClient.queuePath(project, location, queue);
+            const task = {
+                httpRequest: {
+                    httpMethod: 'POST' as const,
+                    url: url,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: Buffer.from(JSON.stringify(payload)).toString('base64'),
+                    oidcToken: {
+                        serviceAccountEmail: this.config.CLOUD_TASKS_SA_EMAIL || `${project}@appspot.gserviceaccount.com`,
+                        audience: url
+                    },
+                },
+            };
+
+            const createTaskPromise = cloudTasksClient.createTask({ parent, task });
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error("Connection Timeout")), 4000);
+            });
+
+            await Promise.race([createTaskPromise, timeoutPromise]);
+            logger.info(`[HIVE] Enqueued mission to Cloud Tasks: ${payload.interactionId}`);
+        } catch (err: any) {
+            logger.warn(`[HIVE] Cloud Tasks Error: ${err.message}. Falling back to direct Modal execution for ${payload.interactionId}`);
+            
+            // Simulate webhook claim and execute
+            try {
+                const claim = await hivePersistence.claimTask(payload.interactionId);
+                if (claim.success) {
+                    this.executeGeneration(payload).catch(execErr => {
+                        logger.error(`[WORKER] Direct Execution Failed: ${payload.interactionId}`, execErr);
+                    });
+                }
+            } catch (claimErr: any) {
+                 logger.error(`[WORKER] Failed to claim task for fallback execution: ${payload.interactionId}`, claimErr);
+            }
+        }
     }
 
     // --- Server & Maintenance ---

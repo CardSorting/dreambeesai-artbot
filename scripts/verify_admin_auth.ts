@@ -1,7 +1,6 @@
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import { hivePersistence } from '../src/services/HivePersistence.js';
 
-dotenv.config();
 
 async function testConnection() {
     console.log('--- HivePersistence: Admin User Auth Test ---');

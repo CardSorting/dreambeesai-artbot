@@ -167,19 +167,27 @@ export class HivePersistence {
                 return {
                     doc: (id?: string) => id ? webDoc(this.db, path, id) : webDoc(webCollection(this.db, path)),
                     where: (field: string, op: any, value: any) => {
-                        // This is a simplified shim for chaining
+                        const q = webQuery(col, webWhere(field, op, value));
                         return {
-                            get: () => webGetDocs(webQuery(col, webWhere(field, op, value)))
+                            limit: (n: number) => ({
+                                get: () => webGetDocs(webQuery(q, webLimit(n)))
+                            }),
+                            get: () => webGetDocs(q)
                         };
                     },
-                    orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => ({
-                        limit: (n: number) => ({
-                            get: () => webGetDocs(webQuery(col, webOrderBy(field, dir), webLimit(n)))
-                        })
-                    }),
+                    orderBy: (field: string, dir: 'asc' | 'desc' = 'asc') => {
+                        const q = webQuery(col, webOrderBy(field, dir));
+                        return {
+                            limit: (n: number) => ({
+                                get: () => webGetDocs(webQuery(q, webLimit(n)))
+                            }),
+                            get: () => webGetDocs(q)
+                        };
+                    },
                     limit: (n: number) => ({
                         get: () => webGetDocs(webQuery(col, webLimit(n)))
                     }),
+
                     get: () => webGetDocs(col),
                     add: (data: any) => webSetDoc(webDoc(col), data)
                 };
@@ -308,7 +316,10 @@ export class HivePersistence {
                 logger.info(`[HivePersistence] Connected via Application Default Credentials (Project: ${projectId})`);
             }
 
-            this.db.settings({ ignoreUndefinedProperties: true });
+            if (!this.isWebSDK) {
+                this.db.settings({ ignoreUndefinedProperties: true });
+            }
+
         } catch (err: any) {
             logger.error("[HivePersistence] Initialization failed", err);
             throw err;
@@ -331,6 +342,9 @@ export class HivePersistence {
             return false;
         }
     }
+
+
+
 
     // --- Pricing Logic (Consolidated from lib/models.js) ---
     calculateBatchCost(modelId: string, count = 4): number {

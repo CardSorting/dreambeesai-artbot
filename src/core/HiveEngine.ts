@@ -158,9 +158,9 @@ export class HiveEngine {
 
         const isHealthy = await hivePersistence.verifyConnectivity();
         if (!isHealthy) {
-            logger.error("FATAL: HivePersistence check failed.");
-            process.exit(1);
+            logger.warn("HivePersistence check failed. Starting in DEGRADED mode.");
         }
+
 
         // Sovereign Boot Sequence
         await hivePersistence.primeWarmCache();
@@ -168,6 +168,7 @@ export class HiveEngine {
         
         await this.loadExtensions();
         await this.initializeDiscord();
+
         this.initializeServer();
         this.startMaintenance();
 

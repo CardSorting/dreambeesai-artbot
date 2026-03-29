@@ -1,4 +1,6 @@
+import 'dotenv/config';
 import { HiveEngine } from './core/HiveEngine.js';
+
 
 /**
  * THE SPARK

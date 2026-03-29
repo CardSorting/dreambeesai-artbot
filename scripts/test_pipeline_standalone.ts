@@ -49,7 +49,8 @@ async function testPipelineStandalone() {
                 return mockChannel;
             }
         },
-        user: { tag: 'HeadlessHive#0000' }
+        user: { tag: 'HeadlessHive#0000' },
+        destroy: async () => console.log("🔌 [MOCK DISCORD] Client destroyed.")
     };
 
     // --- 2. INSTANTIATE ENGINE ---
@@ -80,7 +81,7 @@ async function testPipelineStandalone() {
         interactionId: testInteractionId,
         discordId: 'mock_user_123',
         channelId: mockChannel.id,
-        prompt: 'A microscopic view of a cyber-organic flower with nectar made of glowing honey',
+        prompt: 'A solar-punk sanctuary where bees are made of liquid sunlight',
         modelId: 'wai-illustrious',
         guildId: 'mock_guild_456',
         createdAt: Date.now()

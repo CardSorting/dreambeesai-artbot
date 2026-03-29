@@ -37,15 +37,11 @@ export interface ModalResponse {
  * Replaces: ModalAIAdapter, ImageProcessor, and Generation Domain models.
  */
 export class HiveGenerator {
-    private zitEndpoint: string;
-    private sdxlEndpoint: string;
-    private fluxEndpoint: string;
+    private get zitEndpoint(): string { return process.env.MODAL_ZIT_ENDPOINT || ''; }
+    private get sdxlEndpoint(): string { return process.env.MODAL_SDXL_ENDPOINT || ''; }
+    private get fluxEndpoint(): string { return process.env.MODAL_FLUX_ENDPOINT || ''; }
 
-    constructor() {
-        this.zitEndpoint = process.env.MODAL_ZIT_ENDPOINT || '';
-        this.sdxlEndpoint = process.env.MODAL_SDXL_ENDPOINT || '';
-        this.fluxEndpoint = process.env.MODAL_FLUX_ENDPOINT || '';
-    }
+    constructor() {}
 
     /**
      * GENERATE: High-level entry point for AI model interaction.

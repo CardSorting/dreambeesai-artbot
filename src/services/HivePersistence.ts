@@ -522,7 +522,7 @@ export class HivePersistence {
         success: boolean, rewardAmount: number, bonusAmount: number, newStreak: number, newBalance: number 
     }> {
         await this.ensureReady();
-        const userRef = this.collection(COLLECTIONS.USERS).doc(discordId);
+        const userRef = this.doc(COLLECTIONS.USERS, discordId);
         const { available, nextReset } = await this.isDailyRewardAvailable(discordId);
         if (!available) throw new Error(`You have already claimed your honey today! Next harvest: <t:${Math.floor(nextReset / 1000)}:R>`);
 
@@ -545,9 +545,7 @@ export class HivePersistence {
                 lastFreeClaimAt: this.fieldValue.serverTimestamp()
             });
 
-            const claimRef = this.isWebSDK 
-                ? webDoc(this.collection(COLLECTIONS.USERS).doc(discordId), 'claims', dateId)
-                : userRef.collection('claims').doc(dateId);
+            const claimRef = this.doc(COLLECTIONS.USERS, discordId, 'claims', dateId);
 
             t.set(claimRef, {
                 timestamp: this.fieldValue.serverTimestamp(),
@@ -570,9 +568,7 @@ export class HivePersistence {
         const now = new Date();
         const dateId = `claim_${now.getUTCFullYear()}_${now.getUTCMonth() + 1}_${now.getUTCDate()}`;
         
-        const claimRef = this.isWebSDK
-            ? webDoc(this.collection(COLLECTIONS.USERS).doc(discordId), 'claims', dateId)
-            : this.db.collection(COLLECTIONS.USERS).doc(discordId).collection('claims').doc(dateId);
+        const claimRef = this.doc(COLLECTIONS.USERS, discordId, 'claims', dateId);
             
         const claimSnap = await this.getDocCompat(claimRef);
         

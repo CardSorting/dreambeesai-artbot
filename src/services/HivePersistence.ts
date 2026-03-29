@@ -140,7 +140,7 @@ export class HivePersistence {
     private isWebSDK = false;
     private memoryCache = new Map<string, { data: any, expires: number }>();
 
-    private initPromise: Promise<void> | null = null;
+    public initPromise: Promise<void> | null = null;
 
     constructor() {
         this.initPromise = this.initialize();

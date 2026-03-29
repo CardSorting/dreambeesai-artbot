@@ -33,3 +33,5 @@ npm-debug.log*
 # Cloud Build DOES NOT need .env because it just builds the image.
 
 # Let's keep it simple: exclude common junk and match what's needed for the build.
+dist/
+.env

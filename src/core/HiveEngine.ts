@@ -117,6 +117,7 @@ export class HiveEngine {
     private interactionHandlers = new Collection<string, any>();
     private isInitialized = false;
     private startTime = Date.now();
+    private hiveGenerator = new HiveGenerator();
     private _workerLimit: ReturnType<typeof pLimit> | null = null;
 
     private get workerLimit(): ReturnType<typeof pLimit> {

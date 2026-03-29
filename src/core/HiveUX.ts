@@ -225,11 +225,7 @@ export class HiveUX {
             new ButtonBuilder()
                 .setCustomId(`remix_vibegrid_${originalInteractionId}_${imageIndex}`)
                 .setLabel('Elite Vibe Grid 🎰')
-                .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-                .setCustomId(`mockup_studio_${originalInteractionId}_${imageIndex}`)
-                .setLabel('Mockup Studio ✨')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(ButtonStyle.Success)
         );
 
         const vibeRow = new ActionRowBuilder().addComponents(

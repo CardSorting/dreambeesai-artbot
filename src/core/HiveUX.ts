@@ -82,9 +82,10 @@ export class HiveUX {
     /**
      * Interaction Row for Upscaling
      */
-    static createUpscaleRow(interactionId: string) {
+    static createUpscaleRow(interactionId: string, count: number = 4) {
+        const labels = Array.from({ length: count }, (_, i) => `U${i + 1}`);
         return new ActionRowBuilder<ButtonBuilder>().addComponents(
-            ['U1', 'U2', 'U3', 'U4'].map((label, i) =>
+            labels.map((label, i) =>
                 new ButtonBuilder()
                     .setCustomId(`upscale_${interactionId}_${i}`)
                     .setLabel(label)
@@ -173,7 +174,7 @@ export class HiveUX {
             .setColor('#fbbf24')
             .setFooter({ text: 'DreamBees Hive • Universal Image Evolution' });
 
-        const syncRow = new ActionRowBuilder().addComponents(
+        const mainActionRow = new ActionRowBuilder().addComponents(
              new ButtonBuilder()
                 .setCustomId(`remix_upscale_${interactionId}_0`)
                 .setLabel('Manual Remix 💡')
@@ -191,7 +192,19 @@ export class HiveUX {
             new ButtonBuilder().setCustomId(`remix_vibe_${interactionId}_0_dark`).setLabel('Dark 🌑').setStyle(ButtonStyle.Secondary)
         );
 
-        return { embeds: [embed], components: [syncRow as any, vibeRow as any] };
+        const toolsRow = new ActionRowBuilder().addComponents(
+             new StringSelectMenuBuilder()
+                .setCustomId(`remix_tools_${interactionId}_0`)
+                .setPlaceholder('🛠️ Advanced Remix Tools...')
+                .addOptions([
+                    { label: 'Genius Ideas 🔮', description: 'AI directions', value: 'genius' },
+                    { label: 'Subtle Edit (0.5) ⚡', description: 'Low creativity', value: 'strength_low' },
+                    { label: 'Explore Neighborhood 🧭', description: '4 variations', value: 'explore_variations' },
+                    { label: 'Summon Prism 💎', description: 'Mythic realms', value: 'summon_prism' }
+                ])
+        );
+
+        return { embeds: [embed], components: [mainActionRow as any, vibeRow as any, toolsRow as any] };
     }
 
     /**
@@ -204,17 +217,26 @@ export class HiveUX {
             .setDescription('✨ **Image retrieved successfully!** This generation is saved to your independent Discord history.')
             .setImage(imageUrl);
 
-        const syncRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`mockup_studio_${originalInteractionId}_${imageIndex}`).setLabel('Mockup Studio ✨').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`remix_upscale_${originalInteractionId}_${imageIndex}`).setLabel('Remix 💡').setStyle(ButtonStyle.Secondary)
+        const mainActionRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`remix_upscale_${originalInteractionId}_${imageIndex}`)
+                .setLabel('Manual Remix 💡')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId(`remix_vibegrid_${originalInteractionId}_${imageIndex}`)
+                .setLabel('Elite Vibe Grid 🎰')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`mockup_studio_${originalInteractionId}_${imageIndex}`)
+                .setLabel('Mockup Studio ✨')
+                .setStyle(ButtonStyle.Secondary)
         );
 
         const vibeRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`remix_vibe_${originalInteractionId}_${imageIndex}_cyberpunk`).setLabel('Cyberpunk ⚡').setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId(`remix_vibe_${originalInteractionId}_${imageIndex}_studio`).setLabel('Studio 📸').setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId(`remix_vibe_${originalInteractionId}_${imageIndex}_anime`).setLabel('Anime 🌸').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId(`remix_vibe_${originalInteractionId}_${imageIndex}_dark`).setLabel('Dark 🌑').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId(`remix_vibegrid_${originalInteractionId}_${imageIndex}`).setLabel('Elite Vibe Grid 🎰').setStyle(ButtonStyle.Success)
+            new ButtonBuilder().setCustomId(`remix_vibe_${originalInteractionId}_${imageIndex}_dark`).setLabel('Dark 🌑').setStyle(ButtonStyle.Secondary)
         );
 
         const toolsRow = new ActionRowBuilder().addComponents(
@@ -229,7 +251,7 @@ export class HiveUX {
                 ])
         );
 
-        return { embeds: [embed], components: [syncRow as any, vibeRow as any, toolsRow as any] };
+        return { embeds: [embed], components: [mainActionRow as any, vibeRow as any, toolsRow as any] };
     }
     /**
      * Standard Success Embed (Generic)

@@ -673,9 +673,20 @@ export class HiveEngine {
             const channel = await this.client.channels.fetch(channelId).catch(() => null);
             
             if (channel && 'send' in channel) {
+                const components = [];
+                if (result.images.length > 1) {
+                    components.push(HiveUX.createUpscaleRow(interactionId, result.images.length));
+                } else if (result.images.length === 1) {
+                    // Show a single button for 1-image generations so users can access 
+                    // Remix controls on the individual image.
+                    components.push(HiveUX.createUpscaleRow(interactionId, 1));
+                }
+                components.push(HiveUX.createModRow(interactionId));
+
                 await (channel as any).send({ 
                     content: `🐝 **Harvest Complete!** <@${discordId}>, your vision from the hive:`, 
-                    files: [attachment] 
+                    files: [attachment],
+                    components
                 });
             }
 

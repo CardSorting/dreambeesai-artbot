@@ -198,59 +198,11 @@ if (fs.existsSync(interactionsPath)) {
     }
 }
 
-import { OAuth2Client } from 'google-auth-library';
-import { processGenerationTask } from './lib/queue/processor.js';
 
-const authClient = new OAuth2Client();
-
-async function verifyOidcToken(req) {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
-    const token = authHeader.split(' ')[1];
-
-    try {
-        const expectedAudience = process.env.TASK_WEBHOOK_URL || `${process.env.WEBAPP_URL}/tasks/process-generation`;
-        const ticket = await authClient.verifyIdToken({
-            idToken: token,
-            audience: expectedAudience
-        });
-        const payload = ticket.getPayload();
-        
-        // PRODUCTION HARDENING: Identity Locking
-        const isGoogleIssuer = (payload.iss === 'https://accounts.google.com' || payload.iss === 'accounts.google.com');
-        const isAuthorizedEmail = !process.env.CLOUD_TASKS_SA_EMAIL || payload.email === process.env.CLOUD_TASKS_SA_EMAIL;
-        
-        if (!isGoogleIssuer || !payload.email_verified || !isAuthorizedEmail) {
-            logger.warn("OIDC Identity Mismatch", { 
-                iss: payload.iss, 
-                email: payload.email, 
-                email_verified: payload.email_verified,
-                expected: process.env.CLOUD_TASKS_SA_EMAIL 
-            });
-            return false;
-        }
-        return true;
-    } catch (e) {
-        logger.error("OIDC Verification Failed", { error: e.message });
-        return false;
-    }
-}
 
 /**
  * FORTRESS GUARD: Standardized Webhook Payload Validation
  */
-function validateTaskPayload(payload) {
-    const required = ['requestId', 'prompt', 'modelId', 'userId', 'discordId'];
-    const missing = required.filter(field => !payload[field]);
-    if (missing.length > 0) return { valid: false, error: `Missing required fields: ${missing.join(', ')}` };
-    
-    // Type and Boundary checks
-    if (typeof payload.requestId !== 'string' || payload.requestId.length < 5) return { valid: false, error: 'requestId must be a valid string' };
-    if (typeof payload.prompt !== 'string' || payload.prompt.trim().length < 3) return { valid: false, error: 'prompt too short or invalid' };
-    if (payload.prompt.length > 2000) return { valid: false, error: 'prompt exceeds maximum length (2000 chars)' };
-    
-    return { valid: true };
-}
 
 client.once('ready', async () => {
     logger.info(`Logged in as ${client.user.tag}! Slash commands should be registered via scripts/register-commands.js`);
@@ -452,75 +404,7 @@ if ((!process.env.DISCORD_TOKEN || !process.env.DISCORD_CLIENT_ID) && import.met
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, `http://${req.headers.host}`);
         
-        // 1. Task Queue Webhook (Google Cloud Tasks)
-        if (req.method === 'POST' && url.pathname === '/tasks/process-generation') {
-            const isAuthorized = await verifyOidcToken(req);
-            if (!isAuthorized && process.env.NODE_ENV === 'production') {
-                res.writeHead(403, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: 'Unauthorized Task Delivery' }));
-            }
-
-            let body = '';
-            let bodySize = 0;
-            const MAX_BODY_SIZE = 1 * 1024 * 1024; // 1MB Hard Limit
-
-            req.on('data', chunk => { 
-                bodySize += chunk.length;
-                if (bodySize > MAX_BODY_SIZE) {
-                    res.writeHead(413, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Payload Too Large' }));
-                    req.destroy();
-                    return;
-                }
-                body += chunk; 
-            });
-
-            req.on('end', async () => {
-                if (res.writableEnded) return;
-                try {
-                    const payload = JSON.parse(body);
-                    const validation = validateTaskPayload(payload);
-                    
-                    if (!validation.valid) {
-                        logger.warn(`[CloudTasks] Invalid Task Payload`, { error: validation.error, bodyExcerpt: body.substring(0, 100) });
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({ error: validation.error }));
-                    }
-
-                    const requestId = payload.requestId;
-                    logger.info(`[CloudTasks] Webhook received task: ${requestId}`);
-
-                    const queueRef = db.collection(COLLECTIONS.GENERATION_QUEUE).doc(requestId);
-                    await queueRef.update({ 
-                        status: 'processing', 
-                        startedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                    }).catch(() => {});
-
-                    const result = await processGenerationTask(payload, { 
-                        logger: logger.child({ requestId, source: 'CloudTasks' })
-                    });
-
-                    // ROUND TRIP REDUCTION: Only update if the processor didn't already do it in a consolidated batch
-                    if (!result._alreadyUpdated) {
-                        await queueRef.update({
-                            ...result,
-                            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-                        }).catch(() => {});
-                    }
-
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ status: 'completed', requestId }));
-                } catch (err) {
-                    logger.error(`[CloudTasks] Webhook processing failed`, { error: err.message });
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: err.message }));
-                }
-            });
-            return;
-        }
-
-        // 2. Health Checks (Dependency-Aware)
+        // 1. Health Checks (Dependency-Aware)
         if (url.pathname === '/healthz' || url.pathname === '/') {
             const isClientReady = client.isReady() || (Date.now() - startTime < 30000);
             const isGenApiHealthy = !isCircuitOpen('generation');

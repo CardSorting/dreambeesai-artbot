@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "register": "node scripts/register-commands.js",
+    "register": "NODE_OPTIONS='--loader ts-node/esm' node scripts/register-commands.ts",
+    "clean": "NODE_OPTIONS='--loader ts-node/esm' node scripts/clean-commands.ts",
     "verify": "NODE_OPTIONS='--loader ts-node/esm' node scripts/verify_admin_auth.ts",
     "lint": "eslint .",
     "build": "rimraf dist && tsc",

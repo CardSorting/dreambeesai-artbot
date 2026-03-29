@@ -546,11 +546,19 @@ export class HiveEngine {
         const commandsPath = path.join(__dirname, '../commands');
         if (fs.existsSync(commandsPath)) {
             for (const file of fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') || f.endsWith('.ts'))) {
-                const command = await import(`file://${path.join(commandsPath, file)}`);
-                if (command.data) this.commands.set(command.data.name, command);
+                const commandModule = await import(`file://${path.join(commandsPath, file)}`);
+                // Commands are named exports!
+                for (const key of Object.keys(commandModule)) {
+                    const cmd = commandModule[key];
+                    if (cmd && cmd.data && cmd.execute) {
+                        this.commands.set(cmd.data.name, cmd);
+                        logger.info(`[HiveEngine] Loaded command: ${cmd.data.name}`);
+                    }
+                }
             }
         }
     }
+
 
     private setupProcessHandlers() {
         process.on('SIGINT', () => this.shutdown('SIGINT'));

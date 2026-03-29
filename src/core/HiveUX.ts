@@ -33,7 +33,7 @@ const logger = new Logger();
  * Unified Voice of the Hive
  */
 export const Voice = {
-    restriction: `🚫 **Harvest Restricted!** 🐝\n\nYour daily Zaps are kept safe inside the **DreamBees Hive**. To unlock your rewards, join our official server!\n\n✨ **Join here:** ${process.env.INVITE_LINK || 'https://discord.com/invite/curMHRAN8y'}`,
+    get restriction() { return `🚫 **Harvest Restricted!** 🐝\n\nYour daily Zaps are kept safe inside the **DreamBees Hive**. To unlock your rewards, join our official server!\n\n✨ **Join here:** ${process.env.INVITE_LINK || 'https://discord.com/invite/curMHRAN8y'}`; },
     safety: `🛑 **Queen's Guard Alert!** Your prompt contains prohibited terms. Please keep it clean!`,
     emptyJar: (cost: number, balance: number) => `🍯 **Empty Jar!** This harvest requires **${cost} Zaps**, but you only have **${balance.toFixed(1)}**.`,
     shortNectar: `🐝 **Bzzzzt!** We need a real nectar source to start! (Prompt too short)`,

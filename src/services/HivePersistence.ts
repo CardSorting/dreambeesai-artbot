@@ -469,7 +469,10 @@ export class HivePersistence {
             });
             return true;
         } catch (e: any) {
-            return e.message === 'ALREADY_LOCKED' ? false : true;
+            if (e.message !== 'ALREADY_LOCKED') {
+                logger.error(`[LOCK] Failed to acquire lock for ${discordId} due to unexpected error:`, e.message);
+            }
+            return false;
         }
     }
 

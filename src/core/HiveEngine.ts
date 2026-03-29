@@ -13,7 +13,9 @@ import { HiveGenerator, GenerationTask } from '../services/HiveGenerator.js';
  */
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 const levels: Record<LogLevel, number> = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
-const currentLevel = (process.env.LOG_LEVEL as LogLevel) || (process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG');
+function getCurrentLevel(): LogLevel {
+    return (process.env.LOG_LEVEL as LogLevel) || (process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG');
+}
 const reset = '\x1b[0m';
 const SECRET_KEYS = ['api-key', 'token', 'secret', 'password', 'auth', 'key'];
 
@@ -34,7 +36,7 @@ function scrubData(data: any, depth = 0, maxDepth = 3, visited = new WeakSet()):
 export class Logger {
     constructor(private ctx: any = {}) {}
     private log(level: LogLevel, message: string, data: any = {}) {
-        if (levels[level] < levels[currentLevel]) return;
+        if (levels[level] < levels[getCurrentLevel()]) return;
         const payload = { timestamp: new Date().toISOString(), level, message, ...this.ctx, ...scrubData(data) };
         if (process.env.NODE_ENV === 'production') process.stdout.write(JSON.stringify(payload) + '\n');
         else process.stdout.write(`${level === 'ERROR' ? '\x1b[31m' : '\x1b[36m'}[${level}]${reset} ${message} ${Object.keys(data).length ? JSON.stringify(data) : ''}\n`);
@@ -70,8 +72,6 @@ import { HiveSafety } from '../services/HiveSafety.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const logger = new Logger();
-const imageLimit = pLimit(Number(process.env.IMAGE_CONCURRENCY) || 4);
-const workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
 
 sharp.cache(false);
 
@@ -118,6 +118,7 @@ export class HiveEngine {
     private isInitialized = false;
     private startTime = Date.now();
     private hiveGenerator = new HiveGenerator();
+    private workerLimit: ReturnType<typeof pLimit>;
 
     // Circuit Breaker State (Monitored Layer)
     private breakers = {
@@ -128,6 +129,7 @@ export class HiveEngine {
         dotenv.config();
         this.config = this.loadConfig();
         this.validateConfig();
+        this.workerLimit = pLimit(Number(process.env.WORKER_CONCURRENCY) || 2);
 
         this.client = new Client({
             intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -582,7 +584,7 @@ export class HiveEngine {
      * Transitions from Core orchestration to Infrastructure execution.
      */
     private async executeGeneration(task: GenerationTask) {
-        return workerLimit(async () => {
+        return this.workerLimit(async () => {
             const { interactionId, discordId, channelId } = task;
             
             try {

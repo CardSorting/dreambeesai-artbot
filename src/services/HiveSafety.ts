@@ -159,7 +159,8 @@ export class HiveSafety {
      */
     static async getAbuseBackoff(user: UserProfile): Promise<number> {
         const strikes = user.abuseStrikes || 0;
-        const lastStrikeAt = (user as any).lastStrikeAt?.toDate()?.getTime() || 0;
+        const strikeObj = (user as any).lastStrikeAt;
+        const lastStrikeAt = strikeObj?.toDate?.()?.getTime() || Number(strikeObj) || 0;
 
         if (strikes < 3 || !lastStrikeAt) return 0;
         

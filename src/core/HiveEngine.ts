@@ -8,9 +8,7 @@ import sharp from 'sharp';
 import pLimit from 'p-limit';
 import { OAuth2Client } from 'google-auth-library';
 import { CloudTasksClient } from '@google-cloud/tasks';
-import { ModalAIAdapter } from '../infrastructure/ModalAIAdapter.js';
-import { ImageProcessor } from '../utils/ImageProcessor.js';
-import { GenerationTask } from '../domain/Generation.js';
+import { HiveGenerator, GenerationTask } from '../services/HiveGenerator.js';
 
 /**
  * PILLAR UTILITY: Structured Logger
@@ -122,7 +120,7 @@ export class HiveEngine {
     private isInitialized = false;
     private startTime = Date.now();
     private authClient = new OAuth2Client();
-    private modalAI = new ModalAIAdapter();
+    private hiveGenerator = new HiveGenerator();
 
     // Circuit Breaker State (Monitored Layer)
     private breakers = {
@@ -508,9 +506,9 @@ export class HiveEngine {
         const { interactionId, discordId, channelId } = task;
         
         try {
-            // 1. INFRASTRUCTURE: Generate via Modal
+            // 1. GENERATION: Generate via AI Model
             logger.info(`[WORKER] Calling AI Model for Mission: ${interactionId}`);
-            const result = await this.modalAI.generate(task);
+            const result = await this.hiveGenerator.generate(task);
 
             if (result.status === 'failed') {
                 throw new Error(result.error || 'AI Generation Failed');
@@ -519,7 +517,7 @@ export class HiveEngine {
             // 2. PLUMBING: Stitch buffers
             logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
             const buffers = result.images.map(b64 => Buffer.from(b64, 'base64'));
-            const stitched = await ImageProcessor.stitch(buffers);
+            const stitched = await HiveGenerator.stitch(buffers);
 
             // 3. CORE/UI: Discord Delivery
             const attachment = new AttachmentBuilder(stitched, { name: `harvested_${interactionId.slice(-6)}.webp` });

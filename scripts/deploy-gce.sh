@@ -59,7 +59,7 @@ gcloud config set project ${PROJECT_ID} &>/dev/null
 # Security Scanning, Pruning, and Final GCE Deployment.
 GIT_SHA=$(git rev-parse --short HEAD || echo "uncommitted")
 
-gcloud builds submit --config=cloudbuild.yaml \
+gcloud beta builds submit --config=cloudbuild.yaml \
     --substitutions="_IMAGE_NAME=${IMAGE_NAME},\
 _VERSION=${GIT_SHA},\
 _INSTANCE_NAME=${INSTANCE_NAME},\

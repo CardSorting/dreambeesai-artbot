@@ -59,29 +59,18 @@ export class HiveGenerator {
         }
 
         try {
-            const response = await fetch(`${endpoint}/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: task.prompt,
-                    count: 4,
-                    model_id: task.modelId
-                })
-            });
+            const count = task.count || 4; // Generate 4 images by default unless specified
+            const promises = [];
 
-            if (!response.ok) {
-                throw new Error(`AI Model API failed with status ${response.status}`);
+            for (let i = 0; i < count; i++) {
+                promises.push(this.submitAndPollGenerate(endpoint, task.prompt, task.modelId, i));
             }
 
-            const data = (await response.json()) as ModalResponse;
-
-            if (!data.images || data.images.length === 0) {
-                throw new Error('AI Model returned no images');
-            }
+            const results = await Promise.all(promises);
 
             return {
                 interactionId: task.interactionId,
-                images: data.images.map(img => img.content),
+                images: results,
                 modelId: task.modelId,
                 status: 'completed'
             };
@@ -94,6 +83,62 @@ export class HiveGenerator {
                 error: error.message
             };
         }
+    }
+
+    private async submitAndPollGenerate(endpoint: string, prompt: string, model_id: string, seedModifier: number): Promise<string> {
+        const submitResponse = await fetch(`${endpoint}/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt,
+                count: 1, // Let parallel Modal containers handle concurrency
+                model_id,
+                seed: 42 + seedModifier
+            })
+        });
+
+        if (!submitResponse.ok) {
+            const text = await submitResponse.text().catch(() => '');
+            throw new Error(`AI Generate API failed with status ${submitResponse.status}: ${text}`);
+        }
+
+        const data = (await submitResponse.json()) as any;
+        
+        // Backwards compatibility for older sync endpoints
+        if (data.images && data.images.length > 0) {
+            return data.images[0].content || data.images[0];
+        }
+
+        if (!data.job_id) {
+            throw new Error('AI Model did not return a job_id');
+        }
+
+        const jobId = data.job_id;
+        let attempts = 0;
+        
+        while (attempts < 60) { // Max 2 mins wait per job
+            await new Promise(r => setTimeout(r, 2000));
+            
+            const pollResponse = await fetch(`${endpoint}/result/${jobId}`);
+
+            if (pollResponse.ok && pollResponse.headers.get('content-type')?.includes('image')) {
+                const arrayBuffer = await pollResponse.arrayBuffer();
+                return Buffer.from(arrayBuffer).toString('base64');
+            }
+
+            if (pollResponse.ok && pollResponse.headers.get('content-type')?.includes('json')) {
+                const statusData = await pollResponse.json() as any;
+                if (statusData.status === 'failed') {
+                    throw new Error(statusData.error || 'Job failed during generation.');
+                }
+                if (statusData.status === 'completed' && statusData.result) {
+                    return Buffer.from(statusData.result, 'hex').toString('base64');
+                }
+            }
+            attempts++;
+        }
+
+        throw new Error('Generation timed out polling API');
     }
 
     /**

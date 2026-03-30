@@ -52,14 +52,21 @@ ENV_VARS="NODE_ENV=production;DREAMBEES_API_URL=${DREAMBEES_API_URL};DREAMBEES_A
 echo "🚀 Triggering UNIFIED PIPELINE (v1.7) for ${INSTANCE_NAME}..."
 
 # 1. Project Alignment
-gcloud config set project ${PROJECT_ID} &>/dev/null
+CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "none")
+if [ "$CURRENT_PROJECT" != "${PROJECT_ID}" ]; then
+    echo "🛰️ Aligning project to ${PROJECT_ID} (Current: $CURRENT_PROJECT)..."
+    gcloud config set project ${PROJECT_ID}
+else
+    echo "✅ Project already aligned to ${PROJECT_ID}."
+fi
 
 # 2. Trigger Cloud Build Orchestration
 # The build manifest now handles: Parallel Pre-checks, Kaniko Build, 
 # Security Scanning, Pruning, and Final GCE Deployment.
 GIT_SHA=$(git rev-parse --short HEAD || echo "uncommitted")
 
-gcloud beta builds submit --config=cloudbuild.yaml \
+gcloud builds submit --config=cloudbuild.yaml \
+    --project=${PROJECT_ID} \
     --substitutions="_IMAGE_NAME=${IMAGE_NAME},\
 _VERSION=${GIT_SHA},\
 _INSTANCE_NAME=${INSTANCE_NAME},\

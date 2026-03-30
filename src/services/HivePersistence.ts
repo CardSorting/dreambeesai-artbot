@@ -529,14 +529,20 @@ export class HivePersistence {
     }
 
     // --- Daily Claims (Consolidated from lib/wallet.js) ---
+    private getDailyClaimDateId(date: Date = new Date()): string {
+        return `claim_${date.getUTCFullYear()}_${date.getUTCMonth() + 1}_${date.getUTCDate()}`;
+    }
+
     async claimDaily(discordId: string, options: { guildId: string }): Promise<{ 
         success: boolean, rewardAmount: number, bonusAmount: number, newStreak: number, newBalance: number 
     }> {
         await this.ensureReady();
         const userRef = this.doc(COLLECTIONS.USERS, discordId);
-        const { available, nextReset } = await this.isDailyRewardAvailable(discordId);
-        if (!available) {
-            const nextTime = `<t:${Math.floor(nextReset / 1000)}:R>`;
+        
+        // Initial quick check (Non-transactional)
+        const initialStatus = await this.isDailyRewardAvailable(discordId);
+        if (!initialStatus.available) {
+            const nextTime = `<t:${Math.floor(initialStatus.nextReset / 1000)}:R>`;
             throw new Error(`ALREADY_CLAIMED: You have already gathered your honey today! Next harvest: ${nextTime}`);
         }
 
@@ -545,21 +551,28 @@ export class HivePersistence {
             if (!userSnap.exists) throw new Error('Hive resident not found');
             const userData = userSnap.data() as UserProfile;
 
+            // Re-verify availability INSIDE the transaction to prevent race conditions
+            const dateId = this.getDailyClaimDateId();
+            const claimRef = this.doc(COLLECTIONS.USERS, discordId, 'claims', dateId);
+            const claimSnap = await t.get(claimRef);
+            
+            if (claimSnap.exists) {
+                const nextReset = new Date();
+                nextReset.setUTCHours(24, 0, 0, 0);
+                const nextTime = `<t:${Math.floor(nextReset.getTime() / 1000)}:R>`;
+                throw new Error(`ALREADY_CLAIMED: You have already gathered your honey today! Next harvest: ${nextTime}`);
+            }
+
             const BASE_REWARD = 100;
             const streak = (userData.claimStreak || 0) + 1;
             const bonus = Math.floor(streak / 5) * 50; // Every 5 days, +50 bonus
             const totalReward = BASE_REWARD + bonus;
-
-            const now = new Date();
-            const dateId = `claim_${now.getUTCFullYear()}_${now.getUTCMonth() + 1}_${now.getUTCDate()}`;
 
             t.update(userRef, { 
                 zaps: this.fieldValue.increment(totalReward),
                 claimStreak: streak,
                 lastFreeClaimAt: this.fieldValue.serverTimestamp()
             });
-
-            const claimRef = this.doc(COLLECTIONS.USERS, discordId, 'claims', dateId);
 
             t.set(claimRef, {
                 timestamp: this.fieldValue.serverTimestamp(),
@@ -573,14 +586,18 @@ export class HivePersistence {
                 newStreak: streak, 
                 newBalance: (userData.zaps || 0) + totalReward 
             };
+        }).catch(err => {
+            if (!err.message.includes('ALREADY_CLAIMED')) {
+                logger.error(`[HivePersistence] claimDaily failed for ${discordId}`, err);
+            }
+            throw err;
         });
     }
 
     // --- Claim Status (Consolidated from status.js) ---
     async isDailyRewardAvailable(discordId: string): Promise<{ available: boolean, nextReset: number }> {
         await this.ensureReady();
-        const now = new Date();
-        const dateId = `claim_${now.getUTCFullYear()}_${now.getUTCMonth() + 1}_${now.getUTCDate()}`;
+        const dateId = this.getDailyClaimDateId();
         
         const claimRef = this.doc(COLLECTIONS.USERS, discordId, 'claims', dateId);
             

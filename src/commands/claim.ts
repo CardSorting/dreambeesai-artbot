@@ -32,6 +32,7 @@ export const claim: Command = {
             }
 
             try {
+                context.logger.info(`Starting daily claim for ${interaction.user.tag}`);
                 const result = await hivePersistence.claimDaily(interaction.user.id, { 
                     guildId: interaction.guildId || 'DM' 
                 });
@@ -39,6 +40,7 @@ export const claim: Command = {
                 const embed = HiveUX.createClaimSuccessEmbed(result);
                 await interaction.reply({ embeds: [embed] });
                 await hivePersistence.setCooldown(interaction.user.id, 60000); 
+                context.logger.info(`Claim successful for ${interaction.user.tag}: +${result.rewardAmount} Zaps`);
 
             } catch (err: any) {
                 if (err.message.includes('ALREADY_CLAIMED')) {
@@ -49,6 +51,8 @@ export const claim: Command = {
                     });
                     return; 
                 }
+                
+                context.logger.error(`Claim command failed for ${interaction.user.tag}`, err);
                 throw err; // Let orchestrate handle real failures
             }
         });

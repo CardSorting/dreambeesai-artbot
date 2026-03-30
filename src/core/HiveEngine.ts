@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import sharp from 'sharp';
 import pLimit from 'p-limit';
 import { HiveGenerator, GenerationTask } from '../services/HiveGenerator.js';
+import { HiveConfig } from './HiveConfig.js';
 
 /**
  * PILLAR UTILITY: Structured Logger
@@ -133,9 +134,8 @@ export class HiveEngine {
     };
 
     constructor() {
-        dotenv.config();
+        HiveConfig.validate();
         this.config = this.loadConfig();
-        this.validateConfig();
 
         this.client = new Client({
             intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -188,25 +188,16 @@ export class HiveEngine {
 
     private loadConfig() {
         return {
-            DISCORD_TOKEN: process.env.DISCORD_TOKEN || '',
-            DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID || '',
-            DREAMBEES_API_URL: process.env.DREAMBEES_API_URL || '',
-            DREAMBEES_API_KEY: process.env.DREAMBEES_API_KEY || '',
-            DREAMBEES_GUILD_ID: process.env.DREAMBEES_GUILD_ID || '',
-            NODE_ENV: process.env.NODE_ENV || 'development',
-            PORT: process.env.PORT || '8080',
-            FIREBASE_SERVICE_ACCOUNT_JSON: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
-            INVITE_LINK: process.env.INVITE_LINK || 'https://discord.com/invite/curMHRAN8y'
+            DISCORD_TOKEN: HiveConfig.DISCORD_TOKEN,
+            DISCORD_CLIENT_ID: HiveConfig.DISCORD_CLIENT_ID,
+            DREAMBEES_API_URL: HiveConfig.DREAMBEES_API_URL,
+            DREAMBEES_API_KEY: HiveConfig.DREAMBEES_API_KEY,
+            DREAMBEES_GUILD_ID: HiveConfig.DREAMBEES_GUILD_ID,
+            NODE_ENV: HiveConfig.NODE_ENV,
+            PORT: HiveConfig.PORT,
+            FIREBASE_SERVICE_ACCOUNT_JSON: HiveConfig.FIREBASE_SERVICE_ACCOUNT_JSON,
+            INVITE_LINK: HiveConfig.INVITE_LINK
         };
-    }
-
-    private validateConfig() {
-        const required = ['DISCORD_TOKEN', 'DREAMBEES_API_URL'];
-        const missing = required.filter(k => !(this.config as any)[k]);
-        if (missing.length > 0) {
-            logger.error(`FATAL: Missing environment variables: ${missing.join(', ')}`);
-            process.exit(1);
-        }
     }
 
     // --- Discord Integration ---
@@ -618,8 +609,12 @@ export class HiveEngine {
 
                     if (result.status === 'failed') {
                         if (processingMsg) await processingMsg.delete().catch(() => {});
+                        this.tripBreaker('generation');
                         throw new Error(result.error || 'AI Generation Failed');
                     }
+
+                    // On success, reset the breaker
+                    this.resetBreaker('generation');
 
                     // 2. PLUMBING: Stitch buffers
                     logger.info(`[WORKER] Processing Nectar for Mission: ${interactionId}`);
@@ -681,13 +676,33 @@ export class HiveEngine {
     private isCircuitOpen(service: 'generation') {
         const s = this.breakers[service];
         if (s.status === 'OPEN') {
-            if (Date.now() - s.lastFailure > 45000) {
+            if (Date.now() - s.lastFailure > 60000) { // Fast-fail for 1 min
                 s.status = 'HALF-OPEN';
+                logger.info(`🔄 Circuit Breaker entering HALF-OPEN for ${service}...`);
                 return false;
             }
             return true;
         }
         return false;
+    }
+
+    private tripBreaker(service: 'generation') {
+        const s = this.breakers[service];
+        s.count++;
+        if (s.count >= 3) { // Trip after 3 consecutive failures
+            s.status = 'OPEN';
+            s.lastFailure = Date.now();
+            logger.error(`🚨 CIRCUIT BREAKER TRIPPED for ${service}. Infrastructure protection active.`);
+        }
+    }
+
+    private resetBreaker(service: 'generation') {
+        const s = this.breakers[service];
+        if (s.status !== 'CLOSED') {
+            logger.info(`✨ AI Service ${service} has stabilized. Breaker CLOSED.`);
+        }
+        s.status = 'CLOSED';
+        s.count = 0;
     }
 
     private async handleHealthCheck(res: http.ServerResponse) {
@@ -765,6 +780,15 @@ export class HiveEngine {
     private setupProcessHandlers() {
         process.on('SIGINT', () => this.shutdown('SIGINT'));
         process.on('SIGTERM', () => this.shutdown('SIGTERM'));
+
+        process.on('unhandledRejection', (reason, promise) => {
+            logger.error('Unhandled Rejection detected!', { reason: String(reason) });
+        });
+
+        process.on('uncaughtException', (error) => {
+            logger.error('CRITICAL: Uncaught Exception!', { error: error.message, stack: error.stack });
+            // In production, we might want to shut down gracefully after several exceptions
+        });
     }
 
     private startMaintenance() {

@@ -23,6 +23,7 @@ import {
 } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
+import { HiveConfig } from '../core/HiveConfig.js';
 /**
  * PILLAR MODEL: UserProfile
  */
@@ -274,14 +275,14 @@ export class HivePersistence {
 
     private async initialize() {
         process.env.GOOGLE_CLOUD_FIRESTORE_TELEMETRY_DISABLED = 'true';
-        const saJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-        const saPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || path.resolve(process.cwd(), './serviceAccountKey.json');
+        const saJson = HiveConfig.FIREBASE_SERVICE_ACCOUNT_JSON;
+        const saPath = path.resolve(process.cwd(), './serviceAccountKey.json');
         const projectId = process.env.GCLOUD_PROJECT || 'dreambees-alchemist';
 
         // Check for Web SDK / Admin User fallback (Option 4)
-        const webApiKey = process.env.FIREBASE_API_KEY;
-        const webEmail = process.env.FIREBASE_AUTH_EMAIL;
-        const webPass = process.env.FIREBASE_AUTH_PASSWORD;
+        const webApiKey = HiveConfig.FIREBASE_API_KEY;
+        const webEmail = HiveConfig.FIREBASE_AUTH_EMAIL;
+        const webPass = HiveConfig.FIREBASE_AUTH_PASSWORD;
 
         try {
             // Priority 1: Service Account Key
@@ -301,7 +302,7 @@ export class HivePersistence {
                 this.isWebSDK = true;
                 this.webApp = initializeWebApp({
                     apiKey: webApiKey,
-                    authDomain: process.env.FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
+                    authDomain: HiveConfig.FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
                     projectId: projectId
                 });
                 
@@ -653,29 +654,30 @@ export class HivePersistence {
     // --- Recovery Operations (Consolidated from recovery.js) ---
     async recoverZombies(): Promise<number> {
         await this.ensureReady();
-        const STALE_THRESHOLD = 10 * 60 * 1000;
+        const STALE_THRESHOLD = 5 * 60 * 1000; // Lowered to 5 mins for production
         const staleTime = new Date(Date.now() - STALE_THRESHOLD);
+        
+        logger.info(`[HivePersistence] Sweeping for zombies older than ${staleTime.toISOString()}`);
         
         const snap = await this.collection(COLLECTIONS.TRANSACTIONS)
             .where('status', '==', 'pending')
-            // Note: complex queries might fail with Web SDK if indexes aren't there, 
-            // but we'll try to keep it simple.
-            // .where('timestamp', '<', staleTime) 
             .limit(50).get();
 
         if (snap.empty) return 0;
         let count = 0;
         for (const doc of snap.docs) {
             const data = doc.data();
-            // Filter stale manually for safety if where fails
-            if (data.timestamp?.toDate?.() > staleTime) continue;
+            const ts = data.timestamp?.toDate?.() || new Date(0);
+            if (ts > staleTime) continue;
 
             const genRef = this.collection(COLLECTIONS.GENERATIONS).doc(doc.id);
             const finished = await this.getDocCompat(genRef);
-            if (finished.exists) {
+            
+            if (finished.exists && finished.data().status === 'completed') {
                 await this.updateDocCompat(doc.ref, { status: 'completed' });
             } else {
-                await this.refund(doc.id, 'Zombie Recovery');
+                logger.warn(`[RECOVERY] Refunding zombie mission: ${doc.id}`);
+                await this.refund(doc.id, 'Zombie Recovery (Auto-Sweep)');
                 count++;
             }
         }

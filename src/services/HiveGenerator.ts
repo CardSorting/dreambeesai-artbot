@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import sharp from 'sharp';
+import { HiveConfig } from '../core/HiveConfig.js';
 
 /**
  * DOMAIN: Pure Business Models for AI Generation
@@ -37,9 +38,9 @@ export interface ModalResponse {
  * Replaces: ModalAIAdapter, ImageProcessor, and Generation Domain models.
  */
 export class HiveGenerator {
-    private get zitEndpoint(): string { return process.env.MODAL_ZIT_ENDPOINT || ''; }
-    private get sdxlEndpoint(): string { return process.env.MODAL_SDXL_ENDPOINT || ''; }
-    private get fluxEndpoint(): string { return process.env.MODAL_FLUX_ENDPOINT || ''; }
+    private get zitEndpoint(): string { return HiveConfig.MODAL_ZIT_ENDPOINT; }
+    private get sdxlEndpoint(): string { return HiveConfig.MODAL_SDXL_ENDPOINT; }
+    private get fluxEndpoint(): string { return HiveConfig.MODAL_FLUX_ENDPOINT; }
 
     constructor() {}
 
@@ -125,9 +126,10 @@ export class HiveGenerator {
 
         const jobId = data.job_id;
         let attempts = 0;
+        let delay = 2000;
         
-        while (attempts < 60) { // Max 2 mins wait per job
-            await new Promise(r => setTimeout(r, 2000));
+        while (attempts < 60) { // Max ~2-5 mins wait depending on backoff
+            await new Promise(r => setTimeout(r, delay));
             
             const pollResponse = await fetch(`${endpoint}/result/${jobId}`);
 
@@ -145,7 +147,10 @@ export class HiveGenerator {
                     return Buffer.from(statusData.result, 'hex').toString('base64');
                 }
             }
+            
+            // Exponential backoff
             attempts++;
+            delay = Math.min(delay * 1.5, 10000); 
         }
 
         throw new Error('Generation timed out polling API');
@@ -213,8 +218,9 @@ export class HiveGenerator {
 
         // 2. Polling Loop
         let attempts = 0;
-        while (attempts < 60) { // Max 2 mins wait
-            await new Promise(r => setTimeout(r, 2000));
+        let delay = 2000;
+        while (attempts < 60) { 
+            await new Promise(r => setTimeout(r, delay));
 
             const pollResponse = await fetch(`${this.fluxEndpoint}/result/${data.job_id}`);
 
@@ -235,7 +241,9 @@ export class HiveGenerator {
                 }
                 // 'generating' or 'queued', just continue polling
             }
+
             attempts++;
+            delay = Math.min(delay * 1.5, 10000);
         }
 
         throw new Error('Generation timed out polling FLUX API');

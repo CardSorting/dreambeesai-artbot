@@ -5,12 +5,6 @@ import { hivePersistence } from '../src/services/HivePersistence.js';
 async function testConnection() {
     console.log('--- HivePersistence: Admin User Auth Test ---');
     try {
-        // The persistence layer initializes itself on import/first use.
-        // We wait for a bit to ensure async init is done if it's triggerred.
-        // Actually, HivePersistence.initialize is called in constructor and is async.
-        // Wait, I made initialize 'private async' but didn't await it in constructor.
-        // Let's check that.
-        
         console.log('Verifying connectivity...');
         const isHealthy = await hivePersistence.verifyConnectivity();
         
@@ -22,12 +16,16 @@ async function testConnection() {
             await hivePersistence.primeWarmCache();
             
             console.log('Test complete.');
+            await hivePersistence.close();
+            process.exit(0);
         } else {
             console.error('❌ FAILURE: Connectivity check failed.');
+            await hivePersistence.close();
             process.exit(1);
         }
     } catch (err) {
         console.error('❌ CRITICAL ERROR during test:', err);
+        await hivePersistence.close();
         process.exit(1);
     }
 }

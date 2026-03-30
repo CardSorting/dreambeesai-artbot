@@ -253,6 +253,12 @@ export class HiveEngine {
                     }
                 }
             }
+        } catch (err: any) {
+            ctxLogger.error(`FATAL: Interaction handler crashed for ${interaction.id}`, err);
+            // Optionally reply if not already replied/deferred
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: '⚠️ **Collective Hive Error:** A worker has encountered a fatal anomaly. Please try again later.', ephemeral: true }).catch(() => {});
+            }
         } finally {
             this.activeJobs.delete(interaction.id);
         }

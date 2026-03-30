@@ -48,9 +48,23 @@ export class HiveGenerator {
      * Formerly in ModalAIAdapter.
      */
     async generate(task: GenerationTask): Promise<GenerationResult> {
-        const endpoint = task.modelId.includes('zit') ? this.zitEndpoint : this.sdxlEndpoint;
+        let endpoint = '';
+        
+        // Explicit mapping for known models
+        if (task.modelId.includes('zit')) {
+            endpoint = this.zitEndpoint;
+        } else if (task.modelId === 'wai-illustrious' || task.modelId.includes('sdxl')) {
+            endpoint = this.sdxlEndpoint;
+        } else if (task.modelId.includes('flux')) {
+            endpoint = this.fluxEndpoint;
+        } else {
+            // Fallback for custom or unrecognized models
+            endpoint = this.sdxlEndpoint;
+        }
 
         if (!endpoint) {
+            const status = `SDXL=${!!this.sdxlEndpoint}, ZIT=${!!this.zitEndpoint}, FLUX=${!!this.fluxEndpoint}`;
+            console.error(`[HiveGenerator] Endpoint configuration missing for model: ${task.modelId} (${status})`);
             throw new Error(`Endpoint not configured for model: ${task.modelId}`);
         }
 

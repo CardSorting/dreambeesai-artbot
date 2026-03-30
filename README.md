@@ -97,7 +97,7 @@ DreamBees is deployed as a hardened, immutable "Hive Node" on **Google Compute E
 ### 📋 Prerequisites Checklist
 Before deploying, ensure you have:
 - [ ] A Google Cloud Project with Billing enabled.
-- [ ] Required APIs enabled (`Compute`, `Cloud Build`, `Artifact Registry`, `Cloud Tasks`).
+- [ ] Required APIs enabled (`Compute`, `Cloud Build`, `Artifact Registry`).
 - [ ] A service account with `Cloud Build Editor` and `Compute Admin` roles.
 - [ ] A populated `.env` file based on `.env.example`.
 

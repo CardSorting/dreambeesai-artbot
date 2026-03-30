@@ -78,4 +78,6 @@ sequenceDiagram
 
 ## ☁️ Cloud Integration
 
-- **[Google Cloud Tasks](cloudtasks.md)**: Asynchronous generation queue for reliable, long-running image creation.
+- **[Modal AI](https://modal.com)**: Dynamic, serverless GPU clusters for high-performance inference.
+- **[Backblaze B2/S3](https://www.backblaze.com/b2/cloud-storage.html)**: Persistent storage for distributed asset delivery.
+- **Direct Orchestration**: Asynchronous generation with exponential backoff polling for reliable, long-running image creation without third-party task queues.

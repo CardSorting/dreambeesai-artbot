@@ -39,7 +39,6 @@ gcloud services enable \
     compute.googleapis.com \
     cloudbuild.googleapis.com \
     artifactregistry.googleapis.com \
-    cloudtasks.googleapis.com \
     firestore.googleapis.com
 ```
 
@@ -53,19 +52,12 @@ gcloud artifacts repositories create dreambees-bot-repo \
     --description="DreamBees Hive Node Images"
 ```
 
-#### **Static Global IP (Critical for Webhooks)**
-To ensure `TASK_WEBHOOK_URL` remains stable across restarts, reserve a static external IP:
+#### **Static Global IP (Optional but Recommended)**
+To ensure your bot's health check endpoint remains stable across restarts, reserve a static external IP:
 ```bash
 gcloud compute addresses create dreambees-static-ip --region=us-central1
 ```
 
-#### **Cloud Tasks Queue**
-```bash
-gcloud tasks queues create dreambees-generation-queue \
-    --location=us-central1 \
-    --max-dispatches-per-second=10 \
-    --max-concurrent-tasks=50
-```
 
 #### **GCE Hive Node Instance**
 ```bash
@@ -89,7 +81,6 @@ The GCE instance should run under a dedicated **Service Account** with the follo
 | Role | Purpose |
 | :--- | :--- |
 | `roles/datastore.user` | Read/Write access to Firestore state and locks. |
-| `roles/cloudtasks.enqueuer` | Ability to push generation tasks to the queue. |
 | `roles/artifactregistry.reader` | Ability to pull updated container images. |
 | `roles/logging.logWriter` | Writing system logs to Cloud Logging for observability. |
 
@@ -133,8 +124,6 @@ The bot's deployment script (`deploy-gce.sh`) injects secret logic into GCE meta
 | `DISCORD_CLIENT_ID` | **Required** | The Application ID for OAuth and slash command registration. |
 | `FIREBASE_API_KEY` | **Required** | API Key for Firestore state persistence. |
 | `DREAMBEES_API_KEY` | **Critical** | Authentication key for Modal-based AI inference. |
-| `CLOUD_TASKS_SA_EMAIL` | **Security** | Service Account email for OIDC-signed task delivery validation. |
-| `TASK_WEBHOOK_URL` | **Required** | Public URL pointing to `/tasks/process-generation`. |
 
 ---
 

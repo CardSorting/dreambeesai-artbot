@@ -609,7 +609,7 @@ export class HivePersistence {
     /**
      * ATOMIC TASK CLAIMING
      * Ensures only one worker instance can process a specific interaction task.
-     * Implements idempotency for the Cloud Tasks webhook.
+     * Implements mission idempotency for asynchronous workers.
      */
     async claimTask(interactionId: string): Promise<{ success: boolean; reason?: string }> {
         await this.ensureReady();

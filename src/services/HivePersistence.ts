@@ -535,7 +535,10 @@ export class HivePersistence {
         await this.ensureReady();
         const userRef = this.doc(COLLECTIONS.USERS, discordId);
         const { available, nextReset } = await this.isDailyRewardAvailable(discordId);
-        if (!available) throw new Error(`You have already claimed your honey today! Next harvest: <t:${Math.floor(nextReset / 1000)}:R>`);
+        if (!available) {
+            const nextTime = `<t:${Math.floor(nextReset / 1000)}:R>`;
+            throw new Error(`ALREADY_CLAIMED: You have already gathered your honey today! Next harvest: ${nextTime}`);
+        }
 
         return await this.runTransactionCompat(async (t) => {
             const userSnap = await t.get(userRef);

@@ -371,7 +371,11 @@ export class HiveProxyInteraction {
             
             const result = (this.interaction.deferred || this.interaction.replied)
                 ? await (this.interaction as any).editReply(payload)
-                : await (this.interaction as any).reply(payload);
+                : await (this.interaction as any).reply(payload).catch((e: any) => {
+                    if (e.code === 40060 || e.code === 'InteractionAlreadyReplied') 
+                        return (this.interaction as any).editReply(payload);
+                    throw e;
+                });
             
             this.hasReplied = true;
             this.lastMessage = result;

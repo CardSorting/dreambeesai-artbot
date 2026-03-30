@@ -347,7 +347,9 @@ export class HiveEngine {
             if (state === HiveState.CHARGED || state === HiveState.ACTIVE) {
                 await hivePersistence.refund(interaction.id, err.message || 'Mission Failure');
             }
-            await interaction.reply({ content: Voice.failure, ephemeral: true });
+            await interaction.reply({ content: Voice.failure, ephemeral: true }).catch(re => {
+                logger.error(`[CRITICAL] Could not deliver Hive error message: ${re.message}`);
+            });
         } finally {
             await hivePersistence.releaseLock(discordId);
         }

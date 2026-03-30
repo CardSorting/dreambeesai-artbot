@@ -15,7 +15,10 @@ export const claim: Command = {
         const { engine } = context;
         if (!engine) return;
 
-        // Pillar 1: Orchestration
+        // Pillar 1: Defer early for database safety
+        await interaction.defer({ ephemeral: true });
+
+        // Pillar 2: Orchestration
         await engine.orchestrate(interaction, {
             category: 'claim',
             description: 'Daily Zap claiming',
@@ -38,13 +41,15 @@ export const claim: Command = {
                 await hivePersistence.setCooldown(interaction.user.id, 60000); 
 
             } catch (err: any) {
-                if (err.message.includes('already claimed')) {
-                    return await interaction.reply({ 
-                        content: `⏳ **Already Harvested!** ${err.message}`, 
+                if (err.message.includes('ALREADY_CLAIMED')) {
+                    // Gracefully inform the user and return SILENTLY to orchestrate
+                    await interaction.reply({ 
+                        content: `⏳ **Already Harvested!**\n\n${err.message.replace('ALREADY_CLAIMED: ', '')}`, 
                         ephemeral: true 
                     });
+                    return; 
                 }
-                throw err; // Let orchestrate handle other errors
+                throw err; // Let orchestrate handle real failures
             }
         });
     }
